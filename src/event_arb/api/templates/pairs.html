@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Pairs — event-arb{% endblock %}
+{% block content %}
+<h2>Suggested and approved pairs</h2>
+<p class="muted">
+  A machine-generated pair is a <em>research candidate</em> until a human approves it.
+  Only approved pairs can produce a "confirmed" opportunity.
+</p>
+<table>
+  <thead><tr>
+    <th>Pair</th><th>Status</th><th class="num">Score</th><th>Kalshi</th><th>Polymarket</th>
+    <th class="num">Material diffs</th><th>Approved by</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for p in pairs %}
+    <tr>
+      <td><code>{{ p.id[:10] }}</code></td>
+      <td>
+        {% if p.status.value == 'approved' %}<span class="good">approved</span>
+        {% elif p.status.value == 'suspended' %}<span class="bad">suspended</span>
+        {% elif p.status.value == 'rejected' %}<span class="muted">rejected</span>
+        {% else %}<span class="warn">{{ p.status.value }}</span>{% endif %}
+      </td>
+      <td class="num">{{ p.semantic_score }}</td>
+      <td><code>{{ p.kalshi_market_id[:24] }}</code></td>
+      <td><code>{{ p.polymarket_market_id[:24] }}</code></td>
+      <td class="num {% if p.has_material_differences %}bad{% endif %}">
+        {{ p.rule_differences | selectattr('is_material') | list | length }}
+      </td>
+      <td class="muted">{{ p.approved_by or '-' }}</td>
+      <td><a href="/pairs/{{ p.id }}">review</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,43 @@
+{
+  "markets": [
+    {
+      "ticker": "KXFEDDECISION-26SEP-CUT25",
+      "event_ticker": "KXFEDDECISION-26SEP",
+      "title": "Will the Fed cut rates by 25bps at the September 2026 meeting?",
+      "status": "active",
+      "close_time": "2026-09-17T18:00:00Z",
+      "tick_size_dollars": "0.01",
+      "settlement_source": "Federal Reserve FOMC statement",
+      "rules_primary": "If the Federal Open Market Committee announces a target range decrease of exactly 25 basis points at the meeting concluding 2026-09-17, then the market resolves to Yes. The determination is made from the official FOMC statement published at 2:00 PM ET on 2026-09-17.",
+      "rules_secondary": "If the meeting is postponed beyond 2026-09-30 the market resolves to No. Revisions issued after the initial statement do not change settlement.",
+      "yes_bid_dollars": "0.6100",
+      "volume_fp": "184320.00"
+    },
+    {
+      "ticker": "KXHIGHNY-26AUG22-B90",
+      "event_ticker": "KXHIGHNY-26AUG22",
+      "title": "Will the high temperature in NYC on Aug 22 2026 be above 90F?",
+      "status": "active",
+      "close_time": "2026-08-23T04:00:00Z",
+      "tick_size_dollars": "0.01",
+      "settlement_source": "National Weather Service Central Park station",
+      "rules_primary": "If the maximum temperature recorded at the National Weather Service Central Park station on 2026-08-22 is strictly greater than 90 degrees Fahrenheit, then the market resolves to Yes.",
+      "rules_secondary": "Settlement uses the preliminary daily climate report issued the following morning. Later corrections do not change settlement.",
+      "yes_bid_dollars": "0.4200",
+      "volume_fp": "22150.00"
+    },
+    {
+      "ticker": "KXCPIYOY-26SEP-T3.0",
+      "event_ticker": "KXCPIYOY-26SEP",
+      "title": "Will US CPI year-over-year for August 2026 be above 3.0%?",
+      "status": "active",
+      "close_time": "2026-09-11T14:00:00Z",
+      "settlement_source": "Bureau of Labor Statistics CPI release",
+      "tick_size_dollars": "0.01",
+      "rules_primary": "If the year-over-year change in the Consumer Price Index for All Urban Consumers for August 2026, as first published by the Bureau of Labor Statistics, is strictly greater than 3.0 percent, then the market resolves to Yes.",
+      "rules_secondary": "Settlement is based on the initial release only. Subsequent revisions are ignored.",
+      "yes_bid_dollars": "0.3300",
+      "volume_fp": "51000.00"
+    }
+  ]
+}

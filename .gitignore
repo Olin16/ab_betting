@@ -1,0 +1,46 @@
+# ---- Secrets & credentials (security critical) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.pkcs8
+*.keystore
+*.jks
+id_rsa*
+secrets/
+credentials/
+wallet*.json
+keystore/
+*private*key*
+kalshi_*.pem
+polymarket_*.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ---- Data / local state ----
+*.db
+*.sqlite
+*.sqlite3
+data/
+logs/
+*.log
+
+# ---- OS / editor ----
+.DS_Store
+.idea/
+.vscode/

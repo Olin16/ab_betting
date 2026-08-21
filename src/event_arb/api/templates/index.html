@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Overview — event-arb{% endblock %}
+{% block content %}
+<h2>Overview</h2>
+<div class="grid2">
+  <div class="panel">
+    <table>
+      <tr><th>Data source</th><td><code>{{ settings.data_source.value }}</code></td></tr>
+      <tr><th>Markets tracked</th><td class="num">{{ markets }}</td></tr>
+      <tr><th>Pairs</th><td class="num">{{ pairs | length }}</td></tr>
+      <tr><th>Approved pairs</th>
+          <td class="num">{{ pairs | selectattr('is_tradable_pair') | list | length }}</td></tr>
+      <tr><th>Adapters healthy</th>
+          <td>{% if health.healthy %}<span class="good">yes</span>
+              {% else %}<span class="bad">no</span>{% endif %}</td></tr>
+      <tr><th>Live trading possible</th><td class="good">no</td></tr>
+    </table>
+  </div>
+  <div class="panel">
+    <table>
+      <tr><th>Last scan</th><td>{{ result.scanned_at }}</td></tr>
+      <tr><th>Confirmed opportunities</th>
+          <td class="num good">{{ result.confirmed | length }}</td></tr>
+      <tr><th>Research candidates</th>
+          <td class="num warn">{{ result.research_candidates | length }}</td></tr>
+      <tr><th>Rejections</th><td class="num muted">{{ result.rejections | length }}</td></tr>
+      <tr><th>Suspended pairs</th>
+          <td class="num bad">{{ result.suspended_pairs | length }}</td></tr>
+    </table>
+  </div>
+</div>
+
+<h2>Top opportunities</h2>
+{% include "_opportunity_table.html" %}
+{% endblock %}

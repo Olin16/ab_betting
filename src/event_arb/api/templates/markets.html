@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Markets — event-arb{% endblock %}
+{% block content %}
+<h2>Discovered markets ({{ markets | length }})</h2>
+<table>
+  <thead><tr>
+    <th>Venue</th><th>ID</th><th>Title</th><th>Close</th><th>Source</th>
+    <th>Asset</th><th class="num">Fee rate</th><th>Tradable</th>
+  </tr></thead>
+  <tbody>
+  {% for m in markets %}
+    <tr>
+      <td>{{ m.venue.value }}</td>
+      <td><code>{{ m.venue_market_id[:28] }}</code></td>
+      <td>{{ m.title }}</td>
+      <td class="muted">{{ m.close_time or '-' }}</td>
+      <td class="muted">{{ m.settlement_source or '-' }}</td>
+      <td>{{ m.settlement_asset.value }}</td>
+      <td class="num">{{ m.fee_config.taker_rate }}</td>
+      <td>{% if m.is_tradable %}<span class="good">yes</span>
+          {% else %}<span class="bad">no</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

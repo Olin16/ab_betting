@@ -1,0 +1,38 @@
+{% if result.opportunities %}
+<table>
+  <thead>
+    <tr>
+      <th>Label</th><th>Pair</th><th>Direction</th><th class="num">Qty</th>
+      <th class="num">Cost</th><th class="num">Fees (K/P)</th><th class="num">Buffers</th>
+      <th class="num">Payout</th><th class="num">Net</th><th class="num">ROI</th>
+      <th class="num">Book age</th><th>Risk flags</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for o in result.opportunities %}
+    <tr>
+      <td>
+        {% if o.is_confirmed %}<span class="tag tag-confirmed">confirmed</span>
+        {% else %}<span class="tag tag-research">research candidate</span>{% endif %}
+      </td>
+      <td><a href="/pairs/{{ o.pair_id }}"><code>{{ o.pair_id[:10] }}</code></a></td>
+      <td class="muted">{{ o.direction.value }}</td>
+      <td class="num">{{ o.executable_quantity }}</td>
+      <td class="num">${{ o.gross_acquisition_cost }}</td>
+      <td class="num">${{ o.kalshi_fees }} / ${{ o.polymarket_fees }}</td>
+      <td class="num muted">
+        ${{ o.slippage_allowance }} + ${{ o.operational_cost_allowance }}
+        + ${{ o.usdc_conversion_allowance }}
+      </td>
+      <td class="num">${{ o.expected_payout }}</td>
+      <td class="num good">${{ o.net_profit }}</td>
+      <td class="num">{{ o.return_on_capital }}%</td>
+      <td class="num muted">{{ o.kalshi_leg.book_age_ms }}/{{ o.polymarket_leg.book_age_ms }}ms</td>
+      <td>{% for f in o.risk_flags %}<span class="tag tag-flag">{{ f.value }}</span>{% endfor %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No opportunities in the last scan.</p>
+{% endif %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Audit — event-arb{% endblock %}
+{% block content %}
+<h2>Audit log</h2>
+<p class="muted">Append-only record of approvals and automatic suspensions.
+Secrets are redacted before any record is written.</p>
+<table>
+  <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Subject</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for e in events %}
+    <tr>
+      <td class="muted">{{ e.when }}</td>
+      <td>{{ e.actor }}</td>
+      <td>{{ e.action }}</td>
+      <td><code>{{ e.subject[:16] }}</code></td>
+      <td class="muted">{{ e.detail }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No audited events yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

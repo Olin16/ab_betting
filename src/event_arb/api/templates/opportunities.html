@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Opportunities — event-arb{% endblock %}
+{% block content %}
+<h2>Opportunities <span class="muted">(scanned {{ result.scanned_at }})</span></h2>
+{% include "_opportunity_table.html" %}
+
+<h2>Rejections</h2>
+<p class="muted">Every candidate that did not qualify, and why.</p>
+<table>
+  <thead><tr><th>Pair</th><th>Direction</th><th>Reason</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for r in result.rejections %}
+    <tr>
+      <td><code>{{ r.pair_id[:10] }}</code></td>
+      <td class="muted">{{ r.direction.value }}</td>
+      <td class="warn">{{ r.reason.value }}</td>
+      <td class="muted">{{ r.detail }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No rejections.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: event_arb
+      POSTGRES_DB: event_arb
+      # Local development only. Supply a real secret via the environment in any
+      # non-local deployment; never bake one into a tracked file.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U event_arb -d event_arb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      EVENT_ARB_DATABASE_URL: postgresql+psycopg://event_arb:${POSTGRES_PASSWORD:-local_dev_only}@db:5432/event_arb
+      EVENT_ARB_API_HOST: 0.0.0.0
+      EVENT_ARB_API_PORT: 8000
+      # Fixture data by default: no credentials, no venue traffic.
+      EVENT_ARB_DATA_SOURCE: fixture
+      EVENT_ARB_FIXTURE_DIR: /app/tests/fixtures
+      EVENT_ARB_LOG_FORMAT: json
+      # Live trading is not implemented; this stays false.
+      EVENT_ARB_TRADING_ENABLED: "false"
+    ports:
+      - "8000:8000"
+    command: >-
+      sh -c "alembic upgrade head && event-arb serve"
+
+volumes:
+  pgdata:

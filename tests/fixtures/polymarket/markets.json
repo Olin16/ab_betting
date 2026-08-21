@@ -1,0 +1,52 @@
+{
+  "data": [
+    {
+      "condition_id": "0xfed26sepcut25aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "question": "Fed cuts rates by 25 bps in September 2026?",
+      "description": "This market resolves to Yes if the Federal Open Market Committee announces a decrease of exactly 25 basis points to the federal funds target range at its meeting concluding on September 17, 2026, per the official FOMC statement. If the meeting is postponed beyond September 30, 2026, this market resolves to No. Revisions issued after the initial statement do not change resolution.",
+      "category": "finance",
+      "active": true,
+      "closed": false,
+      "accepting_orders": true,
+      "end_date_iso": "2026-09-17T18:00:00Z",
+      "resolution_source": "Federal Reserve FOMC statement",
+      "minimum_tick_size": "0.01",
+      "tokens": [
+        {"token_id": "11111111111111111111", "outcome": "YES"},
+        {"token_id": "22222222222222222222", "outcome": "NO"}
+      ]
+    },
+    {
+      "condition_id": "0xnychigh26aug22bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "question": "Will NYC hit 90F or higher on August 22, 2026?",
+      "description": "This market resolves to Yes if the maximum temperature recorded at the National Weather Service Central Park station on August 22, 2026 is greater than or equal to 90 degrees Fahrenheit. Resolution uses the final corrected monthly climate report published by NOAA, not the preliminary daily report.",
+      "category": "world",
+      "active": true,
+      "closed": false,
+      "accepting_orders": true,
+      "end_date_iso": "2026-08-23T04:00:00Z",
+      "resolution_source": "NOAA final monthly climate report",
+      "minimum_tick_size": "0.01",
+      "tokens": [
+        {"token_id": "33333333333333333333", "outcome": "YES"},
+        {"token_id": "44444444444444444444", "outcome": "NO"}
+      ]
+    },
+    {
+      "condition_id": "0xcpiyoy26augcccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "question": "US CPI YoY above 3.0% for August 2026?",
+      "description": "This market resolves to Yes if the year-over-year change in the Consumer Price Index for All Urban Consumers for August 2026, as first published by the Bureau of Labor Statistics, is strictly greater than 3.0 percent. Only the initial release is used.",
+      "category": "finance",
+      "active": true,
+      "closed": false,
+      "accepting_orders": true,
+      "end_date_iso": "2026-09-11T14:00:00Z",
+      "resolution_source": "Bureau of Labor Statistics CPI release",
+      "minimum_tick_size": "0.01",
+      "tokens": [
+        {"token_id": "55555555555555555555", "outcome": "YES"},
+        {"token_id": "66666666666666666666", "outcome": "NO"}
+      ]
+    }
+  ]
+}

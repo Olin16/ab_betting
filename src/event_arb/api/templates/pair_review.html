@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Pair review — event-arb{% endblock %}
+{% block content %}
+<h2>Pair review <code>{{ pair.id[:16] }}</code></h2>
+
+{% if comparison.has_material %}
+<div class="panel" style="border-left:4px solid var(--bad)">
+  <strong class="bad">{{ comparison.material | length }} material rule difference(s).</strong>
+  <span class="muted">
+    A material difference can change which side settles in the money. Approving this pair
+    requires explicitly acknowledging them.
+  </span>
+</div>
+{% else %}
+<div class="panel" style="border-left:4px solid var(--good)">
+  <strong class="good">No material rule differences detected.</strong>
+  <span class="muted">Automated comparison is a prompt for review, not a substitute for it.</span>
+</div>
+{% endif %}
+
+<h2>Side-by-side rules</h2>
+<div class="grid2">
+  <div class="panel">
+    <h3>Kalshi — <code>{{ kalshi.venue_market_id }}</code></h3>
+    <table>
+      <tr><th>Title</th><td>{{ kalshi.title }}</td></tr>
+      <tr><th>Close</th><td>{{ kalshi.close_time or '-' }}</td></tr>
+      <tr><th>Source</th><td>{{ kalshi.settlement_source or '-' }}</td></tr>
+      <tr><th>Asset</th><td>{{ kalshi.settlement_asset.value }}</td></tr>
+      <tr><th>Rules hash</th><td><code>{{ kalshi.rules_hash[:16] }}</code></td></tr>
+    </table>
+    <p>{{ kalshi.rules_text }}</p>
+  </div>
+  <div class="panel">
+    <h3>Polymarket — <code>{{ polymarket.venue_market_id[:24] }}</code></h3>
+    <table>
+      <tr><th>Title</th><td>{{ polymarket.title }}</td></tr>
+      <tr><th>Close</th><td>{{ polymarket.close_time or '-' }}</td></tr>
+      <tr><th>Source</th><td>{{ polymarket.settlement_source or '-' }}</td></tr>
+      <tr><th>Asset</th><td>{{ polymarket.settlement_asset.value }}</td></tr>
+      <tr><th>Rules hash</th><td><code>{{ polymarket.rules_hash[:16] }}</code></td></tr>
+    </table>
+    <p>{{ polymarket.rules_text }}</p>
+  </div>
+</div>
+
+<h2>Differences</h2>
+<table>
+  <thead><tr>
+    <th>Dimension</th><th>Material</th><th>Kalshi</th><th>Polymarket</th><th>Why it matters</th>
+  </tr></thead>
+  <tbody>
+  {% for d in comparison.differences %}
+    <tr>
+      <td><strong>{{ d.dimension }}</strong></td>
+      <td>{% if d.is_material %}<span class="bad">yes</span>
+          {% else %}<span class="muted">no</span>{% endif %}</td>
+      <td>{{ d.kalshi_value }}</td>
+      <td>{{ d.polymarket_value }}</td>
+      <td class="muted">{{ d.explanation }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No differences detected.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Live order books</h2>
+<div class="grid2">
+  {% for label, book in [('Kalshi', kalshi_book), ('Polymarket', polymarket_book)] %}
+  <div class="panel">
+    <h3>{{ label }}</h3>
+    {% if book %}
+      <p class="muted">
+        age {{ book.age_ms() }}ms · seq {{ book.sequence if book.sequence is not none else 'n/a' }}
+        {% if book.is_stale %}· <span class="bad">STALE</span>{% endif %}
+      </p>
+      <table>
+        <thead><tr><th>YES bid</th><th>YES ask</th><th>NO bid</th><th>NO ask</th></tr></thead>
+        <tbody>
+        {% for i in range(5) %}
+          <tr>
+            <td class="num">{{ book.yes.bids[i].price if book.yes.bids|length > i else '' }}
+              <span class="muted">
+                {{ book.yes.bids[i].quantity if book.yes.bids|length > i else '' }}</span></td>
+            <td class="num">{{ book.yes.asks[i].price if book.yes.asks|length > i else '' }}
+              <span class="muted">
+                {{ book.yes.asks[i].quantity if book.yes.asks|length > i else '' }}</span></td>
+            <td class="num">{{ book.no.bids[i].price if book.no.bids|length > i else '' }}
+              <span class="muted">
+                {{ book.no.bids[i].quantity if book.no.bids|length > i else '' }}</span></td>
+            <td class="num">{{ book.no.asks[i].price if book.no.asks|length > i else '' }}
+              <span class="muted">
+                {{ book.no.asks[i].quantity if book.no.asks|length > i else '' }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No book available.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<h2>Approval</h2>
+<div class="panel">
+  <p class="muted">Approval is recorded with the reviewer's identity and both rules hashes.
+  If either venue edits its rules afterwards, the pair is automatically suspended.</p>
+  <pre><code>curl -X POST localhost:8000/api/pairs/{{ pair.id }}/approve \
+  -H 'content-type: application/json' \
+  -d '{"approved_by":"you@example.com","reviewer_notes":"...",
+       "acknowledge_material_differences":{{ 'true' if comparison.has_material else 'false' }}}'</code></pre>
+</div>
+{% endblock %}
