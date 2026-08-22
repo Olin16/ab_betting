@@ -567,3 +567,34 @@ def test_fixed_operational_cost_can_make_a_tiny_prefix_unprofitable() -> None:
     assert isinstance(
         calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO), RejectedOpportunity
     )
+
+
+def test_calculator_skips_levels_off_the_market_tick_grid() -> None:
+    inputs = make_inputs(
+        kalshi_yes_asks=levels(("0.555", "100"), ("0.56", "100")),
+        poly_no_asks=levels(("0.38", "300")),
+    )
+    result = calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO)
+    opp = as_opportunity(result)
+    assert opp.kalshi_leg.vwap == Decimal("0.5600")
+    assert opp.kalshi_leg.worst_price == Decimal("0.56")
+
+
+def test_calculator_rounds_executable_size_down_to_market_increment() -> None:
+    inputs = make_inputs(
+        kalshi_yes_asks=levels(("0.55", "55")),
+        poly_no_asks=levels(("0.38", "55")),
+    )
+    inputs = CalculationInputs(
+        **{
+            **inputs.__dict__,
+            "kalshi_market": inputs.kalshi_market.model_copy(
+                update={"min_quantity_increment": Decimal("10")}
+            ),
+            "polymarket_market": inputs.polymarket_market.model_copy(
+                update={"min_quantity_increment": Decimal("10")}
+            ),
+        }
+    )
+    opp = as_opportunity(calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO))
+    assert opp.executable_quantity == Decimal("50")

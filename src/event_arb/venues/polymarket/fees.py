@@ -15,25 +15,50 @@ Fees round to five decimal places with a 0.00001 USDC minimum charge on a non-ze
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from event_arb.domain.enums import Venue
 from event_arb.domain.models import FeeConfig
 from event_arb.domain.money import ZERO, ceil_to
 
-__all__ = ["CATEGORY_TAKER_RATES", "FEE_EXP", "MIN_FEE", "polymarket_fee_config", "taker_fee"]
+__all__ = [
+    "CATEGORY_TAKER_RATES",
+    "FEE_EXP",
+    "MIN_FEE",
+    "polymarket_fee_config",
+    "polymarket_fee_config_from_market",
+    "taker_fee",
+]
 
 FEE_EXP = Decimal("0.00001")
 MIN_FEE = Decimal("0.00001")
 
-#: Published 2026-08-21. ASSUMPTION: current and complete. Verify before live use.
+#: Published 2026-08-22. This table is a documented fallback only: live discovery should
+#: prefer a venue-provided per-market rate whenever the API exposes one.
 CATEGORY_TAKER_RATES: dict[str, Decimal] = {
     "crypto": Decimal("0.07"),
     "sports": Decimal("0.05"),
+    "economics": Decimal("0.05"),
+    "culture": Decimal("0.05"),
+    "weather": Decimal("0.05"),
+    "other": Decimal("0.05"),
+    "general": Decimal("0.05"),
     "finance": Decimal("0.04"),
     "politics": Decimal("0.04"),
-    "geopolitical": ZERO,
+    "mentions": Decimal("0.04"),
+    "tech": Decimal("0.04"),
+    "geopolitics": ZERO,
     "world": ZERO,
+}
+
+_CATEGORY_ALIASES: dict[str, str] = {
+    "financial": "finance",
+    "economic": "economics",
+    "sport": "sports",
+    "technology": "tech",
+    "geopolitical": "geopolitics",
+    "world events": "world",
 }
 
 
@@ -44,14 +69,60 @@ def polymarket_fee_config(category: str | None = None) -> FeeConfig:
     overstating fees suppresses a marginal opportunity, whereas understating them invents
     one.
     """
-    key = (category or "").strip().lower()
+    supplied_key = (category or "").strip().lower()
+    key = _CATEGORY_ALIASES.get(supplied_key, supplied_key)
     if key in CATEGORY_TAKER_RATES:
         rate = CATEGORY_TAKER_RATES[key]
         source = f"docs.polymarket.com/trading/fees category={key}"
     else:
         rate = max(CATEGORY_TAKER_RATES.values())
-        source = f"conservative default (unknown category={key or 'none'!r})"
+        source = f"conservative default (unknown category={supplied_key or 'none'!r})"
     return FeeConfig(venue=Venue.POLYMARKET, taker_rate=rate, maker_rate=ZERO, source=source)
+
+
+def polymarket_fee_config_from_market(payload: dict[str, Any]) -> FeeConfig:
+    """Build a fee config from a market payload, preferring venue-provided rates.
+
+    The market object exposes ``feesEnabled`` and ``feeSchedule.rate``
+    (docs.polymarket.com/market-data/market-details). Those are authoritative for that
+    market; the category table is only a fallback for when they are absent, because a
+    hard-coded rate table goes stale silently and the wrong direction of staleness
+    invents profit.
+
+    Precedence:
+
+    1. ``feesEnabled: false`` -> zero rate, whatever else the payload says;
+    2. a parseable ``feeSchedule.rate`` -> that exact rate;
+    3. the documented category table;
+    4. the conservative maximum published rate.
+    """
+    fees_enabled = payload.get("feesEnabled")
+    if fees_enabled is False:
+        return FeeConfig(
+            venue=Venue.POLYMARKET,
+            taker_rate=ZERO,
+            maker_rate=ZERO,
+            source="market.feesEnabled=false",
+        )
+
+    schedule = payload.get("feeSchedule")
+    if isinstance(schedule, dict) and schedule.get("rate") is not None:
+        rate: Decimal | None
+        try:
+            rate = Decimal(str(schedule["rate"]))
+        except (InvalidOperation, ValueError):
+            # A malformed rate must never read as cheap.
+            rate = None
+        if rate is not None and rate >= ZERO:
+            return FeeConfig(
+                venue=Venue.POLYMARKET,
+                taker_rate=rate,
+                maker_rate=ZERO,
+                source="market.feeSchedule.rate",
+            )
+
+    category = payload.get("category")
+    return polymarket_fee_config(category if isinstance(category, str) else None)
 
 
 def taker_fee(quantity: Decimal, price: Decimal, config: FeeConfig) -> Decimal:

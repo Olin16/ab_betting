@@ -24,7 +24,7 @@ from event_arb.domain.models import (
     VenueMarket,
 )
 from event_arb.venues.base import MarketDataError
-from event_arb.venues.polymarket.fees import polymarket_fee_config
+from event_arb.venues.polymarket.fees import polymarket_fee_config_from_market
 
 __all__ = ["build_book", "parse_market", "parse_token_book", "parse_ts_ms"]
 
@@ -164,7 +164,7 @@ def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -
         close_time=close_time,
         settlement_source=str(payload.get("resolution_source", "")),
         tick_size=tick,
-        fee_config=fee_config or polymarket_fee_config(payload.get("category")),
+        fee_config=fee_config or polymarket_fee_config_from_market(payload),
         is_active=active and not closed,
         is_tradable=accepting and active and not closed,
         # Polymarket settles in USDC on Polygon, not USD. This distinction is material.

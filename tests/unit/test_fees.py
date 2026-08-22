@@ -21,7 +21,11 @@ from event_arb.venues.kalshi.fees import (
     default_kalshi_fee_config,
     trade_fee,
 )
-from event_arb.venues.polymarket.fees import polymarket_fee_config, taker_fee
+from event_arb.venues.polymarket.fees import (
+    polymarket_fee_config,
+    polymarket_fee_config_from_market,
+    taker_fee,
+)
 
 KALSHI = default_kalshi_fee_config()
 
@@ -149,6 +153,41 @@ def test_polymarket_unknown_category_is_conservative() -> None:
     assert polymarket_fee_config(None).taker_rate == Decimal("0.07")
 
 
+@pytest.mark.parametrize(
+    ("category", "rate"),
+    [
+        ("crypto", "0.07"),
+        ("sports", "0.05"),
+        ("economics", "0.05"),
+        ("culture", "0.05"),
+        ("weather", "0.05"),
+        ("general", "0.05"),
+        ("finance", "0.04"),
+        ("politics", "0.04"),
+        ("mentions", "0.04"),
+        ("tech", "0.04"),
+        ("geopolitics", "0"),
+        ("world", "0"),
+    ],
+)
+def test_polymarket_documented_category_rates(category: str, rate: str) -> None:
+    """Known categories must not fall through to the conservative 0.07 default."""
+    assert polymarket_fee_config(category).taker_rate == Decimal(rate)
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("geopolitical", "geopolitics"),
+        ("technology", "tech"),
+        ("economic", "economics"),
+        ("world events", "world"),
+    ],
+)
+def test_polymarket_category_aliases(alias: str, canonical: str) -> None:
+    assert polymarket_fee_config(alias).taker_rate == polymarket_fee_config(canonical).taker_rate
+
+
 # ------------------------------------------------------------------------ properties
 
 
@@ -176,3 +215,48 @@ def test_fee_symmetric_around_one_half(price: str) -> None:
     assert trade_fee(Decimal("100"), p, KALSHI) == trade_fee(
         Decimal("100"), Decimal("1") - p, KALSHI
     )
+
+
+# ------------------------------------- per-market Polymarket fee configuration
+
+
+def test_per_market_fee_schedule_overrides_the_category_table() -> None:
+    """Regression for CODEX_REVIEW P2.
+
+    The market object carries feeSchedule.rate. A category lookup is a fallback for
+    when that is absent, not the primary source: hard-coded category rates go stale
+    silently, and the spec requires querying per-market fee settings.
+    """
+    config = polymarket_fee_config_from_market(
+        {"category": "crypto", "feesEnabled": True, "feeSchedule": {"rate": "0.02"}}
+    )
+    assert config.taker_rate == Decimal("0.02")
+    assert "feeSchedule" in config.source
+
+
+def test_fees_disabled_on_a_market_means_zero() -> None:
+    config = polymarket_fee_config_from_market(
+        {"category": "crypto", "feesEnabled": False, "feeSchedule": {"rate": "0.07"}}
+    )
+    assert config.taker_rate == Decimal("0")
+    assert taker_fee(Decimal("100"), Decimal("0.5"), config) == Decimal("0")
+
+
+def test_missing_fee_schedule_falls_back_to_the_category_rate() -> None:
+    config = polymarket_fee_config_from_market({"category": "sports"})
+    assert config.taker_rate == Decimal("0.05")
+
+
+def test_unparseable_fee_schedule_falls_back_conservatively() -> None:
+    """A malformed rate must not be read as cheap; overstating fees is the safe error."""
+    config = polymarket_fee_config_from_market(
+        {"category": "not-a-real-category", "feeSchedule": {"rate": "banana"}}
+    )
+    assert config.taker_rate == Decimal("0.07")
+
+
+def test_makers_are_never_charged_regardless_of_source() -> None:
+    config = polymarket_fee_config_from_market(
+        {"category": "sports", "feesEnabled": True, "feeSchedule": {"rate": "0.05"}}
+    )
+    assert config.maker_rate == Decimal("0")
