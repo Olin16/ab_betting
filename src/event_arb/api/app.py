@@ -47,8 +47,11 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             live_trading_possible=config.live_trading_possible,
         )
         await runtime.discover()
-        await runtime.refresh_books()
+        # Pairs must exist before books are refreshed: the refresh is scoped to the
+        # markets those pairs reference, so refreshing first would target nothing.
+        runtime.seed_watched_pairs()
         runtime.generate_pairs()
+        await runtime.refresh_books()
         yield
         await runtime.close()
 

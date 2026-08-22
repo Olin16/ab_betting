@@ -45,8 +45,10 @@ def _banner(settings: Settings) -> None:
 async def _prepare(settings: Settings, auto_approve: bool) -> Scanner:
     scanner = Scanner(settings)
     await scanner.discover()
-    await scanner.refresh_books()
+    # Pairs first: the book refresh is scoped to the markets those pairs reference.
+    scanner.seed_watched_pairs()
     scanner.generate_pairs(min_score=Decimal("0.4"))
+    await scanner.refresh_books()
 
     if auto_approve:
         # Demo convenience only: approves every candidate whose automated rule comparison

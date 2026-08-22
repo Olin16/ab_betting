@@ -60,9 +60,11 @@ def scanner(fixture_dir: object) -> Scanner:
 
 
 async def prepared(scanner: Scanner) -> Scanner:
+    # Pairs before books: the refresh is scoped to markets referenced by watched pairs.
     await scanner.discover()
-    await scanner.refresh_books()
+    scanner.seed_watched_pairs()
     scanner.generate_pairs(min_score=Decimal("0.4"))
+    await scanner.refresh_books()
     return scanner
 
 

@@ -28,6 +28,8 @@ __all__ = [
     "PaperSettings",
     "PolymarketSettings",
     "Settings",
+    "TrialSettings",
+    "WatchedPair",
     "get_settings",
 ]
 
@@ -104,6 +106,44 @@ class OpportunitySettings(BaseModel):
         return v
 
 
+class WatchedPair(BaseModel):
+    """An explicitly configured pair to watch during a trial.
+
+    Trials do not discover the whole venue. They watch a handful of pairs a human has
+    reviewed, named by venue identifier. This keeps refresh cycles fast enough that books
+    are actually fresh when scanned, and keeps API usage narrowly scoped to markets we
+    intend to trade — which is also what the Kalshi Developer Agreement §3 requires.
+    """
+
+    kalshi_market_id: str
+    polymarket_market_id: str
+    #: Polymarket YES corresponds to Kalshi NO. Must be set by a human, never inferred.
+    outcomes_inverted: bool = False
+    note: str = ""
+
+
+class TrialSettings(BaseModel):
+    """Configuration for a supervised or unattended paper trial."""
+
+    #: When non-empty, discovery and refresh are restricted to these pairs only.
+    watched_pairs: list[WatchedPair] = Field(default_factory=list)
+    #: Seconds between REST refreshes of watched books.
+    refresh_interval_seconds: float = 5.0
+    #: Seconds between opportunity scans.
+    scan_interval_seconds: float = 5.0
+    #: Automatically paper-trade confirmed opportunities as they are detected.
+    auto_paper_trade: bool = True
+    #: Also paper-trade unapproved research candidates (evidence only; never a real trade).
+    paper_trade_research_candidates: bool = False
+    #: Delete stored order-book snapshots older than this. Bounded retention is required
+    #: by the Kalshi Developer Agreement §3.1; see docs/compliance.md.
+    snapshot_retention_hours: int = 72
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.watched_pairs)
+
+
 class PaperSettings(BaseModel):
     leg1_latency_ms: int = 250
     leg2_latency_ms: int = 400
@@ -148,6 +188,7 @@ class Settings(BaseSettings):
     polymarket: PolymarketSettings = Field(default_factory=PolymarketSettings)
     opportunity: OpportunitySettings = Field(default_factory=OpportunitySettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
+    trial: TrialSettings = Field(default_factory=TrialSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
 
     # ---------------------------------------------------------------- live trading
