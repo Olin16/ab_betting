@@ -24,6 +24,7 @@ from event_arb.domain.enums import Venue
 from event_arb.matching.rules_diff import compare_rules
 from event_arb.observability import metrics
 from event_arb.observability.logging import configure_logging, get_logger
+from event_arb.persistence.database import Database
 from event_arb.scanner import Scanner
 
 __all__ = ["create_app"]
@@ -35,7 +36,8 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 def create_app(settings: Settings | None = None, scanner: Scanner | None = None) -> FastAPI:
     config = settings or get_settings()
     configure_logging(config.log_level, config.log_format)
-    runtime = scanner or Scanner(config)
+    database = None if scanner is not None else Database(config.database_url)
+    runtime = scanner or Scanner(config, database=database)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -46,11 +48,20 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             trading_enabled=config.trading_enabled,
             live_trading_possible=config.live_trading_possible,
         )
+        if runtime.database is not None:
+            await runtime.database.create_all()
         await runtime.discover()
+        # Restore before seeding so stored approvals are re-verified against current
+        # rules; a rules change while we were down must suspend, not reinstate.
+        report = await runtime.restore()
+        if report.suspended:
+            log.warning("app.startup.approvals_suspended", **report.as_dict())
         # Pairs must exist before books are refreshed: the refresh is scoped to the
         # markets those pairs reference, so refreshing first would target nothing.
         runtime.seed_watched_pairs()
         runtime.generate_pairs()
+        await runtime.persist_markets()
+        await runtime.persist_pairs()
         await runtime.refresh_books()
         yield
         await runtime.close()
@@ -187,8 +198,9 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
 
     @app.post("/api/scan", response_class=JSONResponse)
     async def api_scan() -> dict[str, Any]:
-        await runtime.refresh_books()
-        result = runtime.scan()
+        books = await runtime.refresh_books()
+        await runtime.record_books(books)
+        result = await runtime.scan_and_persist()
         return {
             "scanned_at": result.scanned_at.isoformat(),
             "confirmed": len(result.confirmed),
@@ -214,7 +226,7 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         if pair_id not in runtime.state.pairs:
             raise HTTPException(status_code=404, detail="pair not found")
         try:
-            pair = runtime.approve(
+            pair = await runtime.approve_and_persist(
                 pair_id,
                 approved_by,
                 str(payload.get("reviewer_notes", "")),

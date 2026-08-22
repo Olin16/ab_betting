@@ -8,7 +8,7 @@ so a caller can scan once, scan on a timer, or scan on demand from an HTTP reque
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from event_arb.config import DataSource, Settings
@@ -23,6 +23,16 @@ from event_arb.orderbooks.book import BookStore
 from event_arb.orderbooks.freshness import FreshnessPolicy
 from event_arb.paper.executor import PaperExecutor, PaperTrade
 from event_arb.paper.portfolio import PaperPortfolio
+from event_arb.persistence.database import Database
+from event_arb.persistence.repositories import (
+    AuditLogRepository,
+    MarketPairRepository,
+    OpportunityRepository,
+    OrderBookSnapshotRepository,
+    PaperTradeRepository,
+    VenueMarketRepository,
+)
+from event_arb.persistence.restore import RestoreReport, restore_pairs
 from event_arb.venues.base import VenueAdapter
 from event_arb.venues.fixture import FixtureAdapter
 
@@ -73,9 +83,14 @@ class Scanner:
     """Coordinates discovery, matching, detection, and paper execution."""
 
     def __init__(
-        self, settings: Settings, adapters: dict[Venue, VenueAdapter] | None = None
+        self,
+        settings: Settings,
+        adapters: dict[Venue, VenueAdapter] | None = None,
+        database: Database | None = None,
     ) -> None:
         self.settings = settings
+        #: Optional: when absent the scanner runs entirely in memory (tests, demos).
+        self.database = database
         self.adapters = adapters or build_adapters(settings)
         self.store = BookStore(FreshnessPolicy(max_age_ms=settings.opportunity.max_book_age_ms))
         self.state = ScannerState()
@@ -88,6 +103,7 @@ class Scanner:
         self.portfolio = PaperPortfolio(
             settings.paper.starting_usd_balance, settings.paper.starting_usdc_balance
         )
+        self.last_restore: RestoreReport | None = None
 
     # ------------------------------------------------------------------ discovery
 
@@ -230,7 +246,11 @@ class Scanner:
         reviewer_notes: str = "",
         acknowledge_material_differences: bool = False,
     ) -> MarketPair:
-        """Approve a pair. This is the only route to a 'confirmed' opportunity."""
+        """Approve a pair. This is the only route to a 'confirmed' opportunity.
+
+        Synchronous so that approval logic stays testable without a database. Use
+        :meth:`approve_and_persist` when durability is required.
+        """
         pair = self.state.pairs[pair_id]
         kalshi = self.state.markets[(Venue.KALSHI, pair.kalshi_market_id)]
         polymarket = self.state.markets[(Venue.POLYMARKET, pair.polymarket_market_id)]
@@ -245,6 +265,33 @@ class Scanner:
         self.state.pairs[pair_id] = approved
         return approved
 
+    async def approve_and_persist(
+        self,
+        pair_id: str,
+        approved_by: str,
+        reviewer_notes: str = "",
+        acknowledge_material_differences: bool = False,
+    ) -> MarketPair:
+        """Approve a pair and durably record the approval and its rule hashes."""
+        approved = self.approve(
+            pair_id, approved_by, reviewer_notes, acknowledge_material_differences
+        )
+        await self.persist_pairs()
+        await self.audit(
+            approved_by,
+            "pair.approved",
+            approved.id,
+            {
+                "kalshi_market_id": approved.kalshi_market_id,
+                "polymarket_market_id": approved.polymarket_market_id,
+                "kalshi_rules_hash": approved.kalshi_rules_hash_at_approval,
+                "polymarket_rules_hash": approved.polymarket_rules_hash_at_approval,
+                "acknowledged_material_differences": acknowledge_material_differences,
+                "reviewer_notes": reviewer_notes,
+            },
+        )
+        return approved
+
     # ------------------------------------------------------------------ detection
 
     def scan(self, now: datetime | None = None) -> ScanResult:
@@ -256,6 +303,37 @@ class Scanner:
         self.portfolio.record_rejections(result.rejections)
         self.state.last_scan = result
         return result
+
+    async def scan_and_persist(self, now: datetime | None = None) -> ScanResult:
+        """Scan, then durably record the opportunities and any auto-suspensions."""
+        result = self.scan(now=now)
+        if self.database is None:
+            return result
+
+        async with self.database.session() as session:
+            opportunities = OpportunityRepository(session)
+            for opportunity in result.opportunities:
+                await opportunities.record(opportunity)
+
+        if result.suspended_pairs:
+            await self.persist_pairs()
+            for pair in result.suspended_pairs:
+                await self.audit(
+                    "system",
+                    "pair.suspended",
+                    pair.id,
+                    {"reason": "rules changed since approval"},
+                )
+        return result
+
+    async def record_books(self, books: list[OrderBook]) -> None:
+        """Persist book snapshots for replay and audit, within the retention window."""
+        if self.database is None or not books:
+            return
+        async with self.database.session() as session:
+            repository = OrderBookSnapshotRepository(session)
+            for book in books:
+                await repository.record(book)
 
     # --------------------------------------------------------------- paper trading
 
@@ -275,7 +353,87 @@ class Scanner:
         trade = await executor.execute(opportunity, kalshi, polymarket)
         self.portfolio.record(trade)
         self.state.paper_trades.append(trade)
+
+        if self.database is not None:
+            async with self.database.session() as session:
+                await PaperTradeRepository(session).record(trade)
+            await self.audit(
+                "system",
+                "paper_trade.executed",
+                trade.id,
+                {
+                    "pair_id": trade.pair_id,
+                    "status": trade.status.value,
+                    "hedged": str(trade.hedged_quantity),
+                    "unhedged": str(trade.unhedged_quantity),
+                    "pnl": str(trade.realized_pnl_if_hedged),
+                },
+            )
         return trade
+
+    # ------------------------------------------------------------------ persistence
+
+    async def persist_markets(self) -> None:
+        """Write current market metadata, including rules hashes."""
+        if self.database is None:
+            return
+        async with self.database.session() as session:
+            await VenueMarketRepository(session).upsert_many(self.state.markets.values())
+
+    async def persist_pairs(self) -> None:
+        """Write pairs with their approval metadata and rule hashes."""
+        if self.database is None:
+            return
+        async with self.database.session() as session:
+            await MarketPairRepository(session).save_many(self.state.pairs.values())
+
+    async def audit(
+        self, actor: str, action: str, subject: str = "", detail: dict[str, object] | None = None
+    ) -> None:
+        if self.database is None:
+            return
+        async with self.database.session() as session:
+            await AuditLogRepository(session).append(actor, action, subject, detail)
+
+    async def restore(self) -> RestoreReport:
+        """Load persisted state, re-verifying every approval against current rules.
+
+        Markets are loaded first because approvals can only be validated against the rules
+        text they were granted for. An approval whose rules have since changed — or whose
+        market cannot be read at all — is suspended rather than reinstated.
+        """
+        if self.database is None:
+            return RestoreReport()
+
+        async with self.database.session() as session:
+            stored_markets = await VenueMarketRepository(session).load_all()
+            stored_pairs = await MarketPairRepository(session).load_all()
+
+        # Live metadata wins over stored metadata: discovery may already have run.
+        merged_markets = {**stored_markets, **self.state.markets}
+        self.state.markets = merged_markets
+
+        pairs, report = restore_pairs(stored_pairs, merged_markets)
+        for pair_id, pair in pairs.items():
+            self.state.pairs.setdefault(pair_id, pair)
+
+        if report.suspended:
+            await self.persist_pairs()
+            for pair, reason in report.suspended:
+                await self.audit("system", "pair.suspended_on_restore", pair.id, {"reason": reason})
+        self.last_restore = report
+        return report
+
+    async def prune_snapshots(self) -> int:
+        """Enforce bounded retention. Returns the number of snapshots removed."""
+        if self.database is None:
+            return 0
+        window = timedelta(hours=self.settings.trial.snapshot_retention_hours)
+        async with self.database.session() as session:
+            removed = await OrderBookSnapshotRepository(session).prune(window)
+        if removed:
+            log.info("scanner.snapshots_pruned", removed=removed)
+        return removed
 
     # ----------------------------------------------------------------------- misc
 
@@ -285,3 +443,5 @@ class Scanner:
     async def close(self) -> None:
         for adapter in self.adapters.values():
             await adapter.close()
+        if self.database is not None:
+            await self.database.dispose()
