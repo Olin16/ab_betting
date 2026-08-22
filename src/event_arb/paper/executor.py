@@ -36,6 +36,7 @@ from event_arb.domain.models import Opportunity, OrderBook, VenueMarket
 from event_arb.domain.money import CENT_EXP, ONE_DOLLAR, ZERO, ceil_to, quantize_price, quantize_qty
 from event_arb.observability import metrics
 from event_arb.observability.logging import get_logger
+from event_arb.orderbooks.freshness import FreshnessPolicy
 from event_arb.paper.fills import SimulatedOrder, simulate_buy
 from event_arb.venues.kalshi.fees import KalshiOrderFeeAccumulator
 from event_arb.venues.polymarket.fees import taker_fee
@@ -175,10 +176,34 @@ class PaperExecutor:
         settings: PaperSettings,
         book_provider: BookProvider,
         kalshi_direct_member: bool = False,
+        freshness: FreshnessPolicy | None = None,
     ) -> None:
         self._settings = settings
         self._book_provider = book_provider
         self._kalshi_direct_member = kalshi_direct_member
+        self._freshness = freshness or FreshnessPolicy()
+
+    def _usable(
+        self, book: OrderBook | None, venue: Venue, market_id: str
+    ) -> tuple[OrderBook | None, str]:
+        """Validate a book at simulated arrival time.
+
+        A book that the opportunity engine would have refused must not be filled against
+        here either. Paper results feed the live-readiness gate in docs/operations.md, so
+        a simulator that trades on stale or mismatched books lets that gate certify
+        itself on evidence it should have thrown away.
+        """
+        if book is None:
+            return None, f"no {venue.value} book at arrival time"
+        if book.venue is not venue or book.market_id != market_id:
+            return None, (
+                f"book mismatch at arrival: expected {venue.value}/{market_id}, "
+                f"got {book.venue.value}/{book.market_id}"
+            )
+        verdict = self._freshness.evaluate(book)
+        if not verdict.is_fresh:
+            return None, f"{venue.value} book unusable at arrival: {verdict.reason}"
+        return book, ""
 
     async def execute(
         self,
@@ -197,12 +222,17 @@ class PaperExecutor:
         )
 
         # --- Leg 1: Kalshi ------------------------------------------------------
-        kalshi_book = await self._book_provider(
-            Venue.KALSHI, opportunity.kalshi_leg.market_id, self._settings.leg1_latency_ms
+        kalshi_book, problem = self._usable(
+            await self._book_provider(
+                Venue.KALSHI, opportunity.kalshi_leg.market_id, self._settings.leg1_latency_ms
+            ),
+            Venue.KALSHI,
+            opportunity.kalshi_leg.market_id,
         )
         if kalshi_book is None:
-            trade.status = PaperTradeStatus.LEG2_FAILED
-            trade.notes.append("leg 1 aborted: no Kalshi book at arrival time")
+            # Nothing was sent, so there is no exposure — not a failed hedge.
+            trade.status = PaperTradeStatus.PENDING
+            trade.notes.append(f"leg 1 not attempted: {problem}")
             metrics.paper_trades.labels(status=trade.status.value).inc()
             return trade
 
@@ -235,13 +265,20 @@ class PaperExecutor:
         # would create exposure in the opposite direction.
         hedge_quantity = trade.leg1.filled_quantity
 
-        polymarket_book = await self._book_provider(
-            Venue.POLYMARKET, opportunity.polymarket_leg.market_id, self._settings.leg2_latency_ms
+        polymarket_book, problem = self._usable(
+            await self._book_provider(
+                Venue.POLYMARKET,
+                opportunity.polymarket_leg.market_id,
+                self._settings.leg2_latency_ms,
+            ),
+            Venue.POLYMARKET,
+            opportunity.polymarket_leg.market_id,
         )
         if polymarket_book is None:
+            # Leg 1 is already on the book, so this is genuine unhedged exposure.
             trade.status = PaperTradeStatus.LEG2_FAILED
             trade.notes.append(
-                "leg 2 failed: no Polymarket book at arrival time; position is fully unhedged"
+                f"leg 2 failed: {problem}; {trade.unhedged_quantity} contracts unhedged"
             )
             metrics.paper_trades.labels(status=trade.status.value).inc()
             return trade

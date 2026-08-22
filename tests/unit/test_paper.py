@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -41,12 +41,14 @@ def levels(*pairs: tuple[str, str]) -> tuple[BookLevel, ...]:
 def make_book(
     venue: Venue, market_id: str, yes_asks: tuple[BookLevel, ...], no_asks: tuple[BookLevel, ...]
 ) -> OrderBook:
+    # Receipt time is "now": the executor validates freshness at arrival, and these
+    # tests are about fill behaviour rather than staleness.
     return OrderBook(
         venue=venue,
         market_id=market_id,
         yes=OrderBookSide(outcome=Outcome.YES, asks=yes_asks),
         no=OrderBookSide(outcome=Outcome.NO, asks=no_asks),
-        received_at=NOW,
+        received_at=datetime.now(UTC),
     )
 
 
@@ -383,3 +385,111 @@ async def test_adverse_fill_settings_never_produce_negative_fills(adverse: str) 
     trade = await executor.execute(make_opportunity(), KALSHI_MARKET, POLY_MARKET)
     assert trade.hedged_quantity >= Decimal("0")
     assert trade.unhedged_quantity >= Decimal("0")
+
+
+# ------------------------------------------------- arrival-book validation
+
+
+def stale_book(
+    venue: Venue,
+    market_id: str,
+    yes_asks: tuple[BookLevel, ...],
+    no_asks: tuple[BookLevel, ...],
+    **overrides: object,
+) -> OrderBook:
+    base: dict[str, object] = {"is_stale": True}
+    return OrderBook(
+        venue=venue,
+        market_id=market_id,
+        yes=OrderBookSide(outcome=Outcome.YES, asks=yes_asks),
+        no=OrderBookSide(outcome=Outcome.NO, asks=no_asks),
+        received_at=datetime.now(UTC),
+        **{**base, **overrides},  # type: ignore[arg-type]
+    )
+
+
+async def test_stale_leg1_book_produces_no_exposure() -> None:
+    """Regression for CODEX_REVIEW P1.
+
+    A stale arrival book previously filled cleanly, reporting both_legs_filled and a
+    100% hedge success rate. Paper evidence feeds the live-readiness gate in
+    docs/operations.md, so a simulator that trades on stale books lets that gate
+    certify itself.
+    """
+    executor = executor_with(
+        {
+            (Venue.KALSHI, "K1"): stale_book(Venue.KALSHI, "K1", levels(("0.55", "300")), ()),
+            (Venue.POLYMARKET, "P1"): FULL_POLY,
+        }
+    )
+    trade = await executor.execute(make_opportunity(), KALSHI_MARKET, POLY_MARKET)
+    assert trade.status is PaperTradeStatus.PENDING
+    assert trade.hedged_quantity == Decimal("0")
+    assert trade.unhedged_quantity == Decimal("0")
+    assert trade.leg1 is None
+    assert any("stale" in note for note in trade.notes)
+
+
+async def test_stale_leg2_book_leaves_honest_unhedged_exposure() -> None:
+    """Leg 1 already filled, so refusing leg 2 must report real unhedged exposure."""
+    executor = executor_with(
+        {
+            (Venue.KALSHI, "K1"): FULL_KALSHI,
+            (Venue.POLYMARKET, "P1"): stale_book(
+                Venue.POLYMARKET, "P1", (), levels(("0.38", "300"))
+            ),
+        }
+    )
+    trade = await executor.execute(make_opportunity(), KALSHI_MARKET, POLY_MARKET)
+    assert trade.status is PaperTradeStatus.LEG2_FAILED
+    assert trade.unhedged_quantity == Decimal("100")
+    assert trade.unhedged_venue is Venue.KALSHI
+
+
+async def test_incomplete_book_is_refused() -> None:
+    executor = executor_with(
+        {
+            (Venue.KALSHI, "K1"): stale_book(
+                Venue.KALSHI,
+                "K1",
+                levels(("0.55", "300")),
+                (),
+                is_stale=False,
+                is_complete=False,
+            ),
+            (Venue.POLYMARKET, "P1"): FULL_POLY,
+        }
+    )
+    trade = await executor.execute(make_opportunity(), KALSHI_MARKET, POLY_MARKET)
+    assert trade.status is PaperTradeStatus.PENDING
+    assert trade.leg1 is None
+
+
+async def test_book_older_than_the_freshness_limit_is_refused() -> None:
+    """Age alone disqualifies a book, even when nothing marked it stale."""
+    ancient = OrderBook(
+        venue=Venue.KALSHI,
+        market_id="K1",
+        yes=OrderBookSide(outcome=Outcome.YES, asks=levels(("0.55", "300"))),
+        no=OrderBookSide(outcome=Outcome.NO, asks=()),
+        received_at=datetime.now(UTC) - timedelta(hours=6),
+    )
+    executor = executor_with({(Venue.KALSHI, "K1"): ancient, (Venue.POLYMARKET, "P1"): FULL_POLY})
+    trade = await executor.execute(make_opportunity(), KALSHI_MARKET, POLY_MARKET)
+    assert trade.status is PaperTradeStatus.PENDING
+    assert trade.leg1 is None
+
+
+async def test_wrong_market_or_venue_book_is_refused() -> None:
+    """A provider returning the wrong book must not be silently traded against."""
+    wrong = OrderBook(
+        venue=Venue.KALSHI,
+        market_id="SOME-OTHER-MARKET",
+        yes=OrderBookSide(outcome=Outcome.YES, asks=levels(("0.10", "300"))),
+        no=OrderBookSide(outcome=Outcome.NO, asks=()),
+        received_at=datetime.now(UTC),
+    )
+    executor = executor_with({(Venue.KALSHI, "K1"): wrong, (Venue.POLYMARKET, "P1"): FULL_POLY})
+    trade = await executor.execute(make_opportunity(), KALSHI_MARKET, POLY_MARKET)
+    assert trade.status is PaperTradeStatus.PENDING
+    assert trade.leg1 is None
