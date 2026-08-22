@@ -121,15 +121,20 @@ Source: <https://docs.polymarket.com/api-reference/wss/market>
   Gap detection therefore relies on the hash changing plus periodic REST resync, which is
   weaker than Kalshi's `seq`. This is recorded as a risk flag on every Polymarket book.
 
-### B4. Fees — VERIFIED formula, ASSUMPTION on rates
+### B4. Fees — VERIFIED formula and market-level precedence
 Source: <https://docs.polymarket.com/trading/fees>
 
 `fee = C × feeRate × p × (1 − p)`. Takers only; **makers are never charged**.
-Rates are **category-dependent**: crypto 0.07, sports 0.05, finance/politics 0.04,
-geopolitical/world events 0.00. Fees round to 5 decimal places, minimum charge 0.00001 USDC.
+Rates are **category-dependent**: crypto 0.07; sports/economics/culture/weather/general
+0.05; finance/politics/mentions/tech 0.04; geopolitical/world events 0.00. Fees round
+to 5 decimal places, minimum charge 0.00001 USDC.
 
-- **ASSUMPTION:** category→rate mapping above is current and complete. Fee rate is stored
-  per market in `FeeConfig` and must be refreshed from the live API/docs, not hard-coded.
+- Market metadata can expose `feesEnabled` and `feeSchedule.rate`. The mapper gives those
+  per-market values precedence over category defaults. `feesEnabled: false` forces zero;
+  a valid `feeSchedule.rate` is used verbatim; category mapping is a fallback; an unknown
+  category uses the conservative maximum published rate.
+- **ASSUMPTION:** the field names and units of `feesEnabled` and `feeSchedule.rate` remain
+  current. Optional live schema tests should fail if the venue changes them.
 - **ASSUMPTION:** `p` in the formula is the execution price of the share being bought.
 - Gas/relayer costs are not documented as Polymarket fees; they are modeled separately as an
   operational-cost buffer.

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from math import gcd
 
 from event_arb.config import OpportunitySettings
 from event_arb.domain.enums import (
@@ -51,7 +52,16 @@ from event_arb.domain.models import (
     RejectedOpportunity,
     VenueMarket,
 )
-from event_arb.domain.money import CENT_EXP, ONE_DOLLAR, ZERO, ceil_to, quantize_price, quantize_qty
+from event_arb.domain.money import (
+    CENT_EXP,
+    ONE_DOLLAR,
+    QTY_EXP,
+    ZERO,
+    ceil_to,
+    floor_to,
+    quantize_price,
+    quantize_qty,
+)
 from event_arb.opportunities.depth import DepthWalk, walk_asks
 from event_arb.venues.kalshi.fees import KalshiOrderFeeAccumulator
 from event_arb.venues.polymarket.fees import taker_fee
@@ -127,6 +137,8 @@ def _candidate_quantities(
     kalshi_asks: tuple[BookLevel, ...],
     polymarket_asks: tuple[BookLevel, ...],
     max_quantity: Decimal,
+    kalshi_increment: Decimal,
+    polymarket_increment: Decimal,
 ) -> list[Decimal]:
     """Quantities worth evaluating: every order-book level boundary, capped.
 
@@ -135,18 +147,28 @@ def _candidate_quantities(
     a level boundary. Evaluating only the deepest fillable size (the previous behaviour)
     misses a profitable prefix sitting behind unprofitable depth.
     """
+    increments = [
+        max(1, int(increment / QTY_EXP)) for increment in (kalshi_increment, polymarket_increment)
+    ]
+    common_units = increments[0] * increments[1] // gcd(*increments)
+    common_increment = Decimal(common_units) * QTY_EXP
+
+    def executable_grid(value: Decimal) -> Decimal:
+        units = floor_to(value / common_increment, Decimal("1"))
+        return quantize_qty(units * common_increment)
+
     boundaries: set[Decimal] = set()
     for asks in (kalshi_asks, polymarket_asks):
         cumulative = ZERO
         for level in asks:
             cumulative += level.quantity
-            capped = quantize_qty(min(cumulative, max_quantity))
+            capped = executable_grid(min(cumulative, max_quantity))
             if capped > ZERO:
                 boundaries.add(capped)
             if cumulative >= max_quantity:
                 break
 
-    capped_max = quantize_qty(max_quantity)
+    capped_max = executable_grid(max_quantity)
     if capped_max > ZERO:
         boundaries.add(capped_max)
     return sorted(boundaries)
@@ -263,7 +285,13 @@ def calculate_direction(
     kalshi_ceiling = ONE_DOLLAR - polymarket_asks[0].price
     polymarket_ceiling = ONE_DOLLAR - kalshi_asks[0].price
 
-    candidates = _candidate_quantities(kalshi_asks, polymarket_asks, requested)
+    candidates = _candidate_quantities(
+        kalshi_asks,
+        polymarket_asks,
+        requested,
+        inputs.kalshi_market.min_quantity_increment,
+        inputs.polymarket_market.min_quantity_increment,
+    )
     if not candidates:
         return reject(RejectionReason.NO_EXECUTABLE_QUANTITY, "no overlapping executable size")
 
