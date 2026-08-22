@@ -120,6 +120,9 @@ class VenueMarket(_Frozen):
     close_time: datetime | None = None
     settlement_source: str = ""
     tick_size: Decimal = Decimal("0.01")
+    #: Smallest tradable quantity step. Executable size is rounded *down* to a multiple
+    #: of this, because rounding up would claim a fill the venue would not accept.
+    min_quantity_increment: Decimal = Decimal("0.01")
     fee_config: FeeConfig
     is_active: bool = True
     is_tradable: bool = True

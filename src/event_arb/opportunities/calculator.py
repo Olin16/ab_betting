@@ -43,6 +43,7 @@ from event_arb.domain.enums import (
     Venue,
 )
 from event_arb.domain.models import (
+    BookLevel,
     LegPlan,
     MarketPair,
     Opportunity,
@@ -104,6 +105,126 @@ def _polymarket_fees(walk: DepthWalk, market: VenueMarket) -> Decimal:
     )
 
 
+@dataclass(frozen=True)
+class _QuantityEvaluation:
+    """Full economics of executing one candidate quantity."""
+
+    quantity: Decimal
+    kalshi_walk: DepthWalk
+    polymarket_walk: DepthWalk
+    kalshi_fees: Decimal
+    polymarket_fees: Decimal
+    gross_cost: Decimal
+    expected_payout: Decimal
+    slippage: Decimal
+    operational: Decimal
+    usdc_allowance: Decimal
+    net_profit: Decimal
+    return_on_capital: Decimal
+
+
+def _candidate_quantities(
+    kalshi_asks: tuple[BookLevel, ...],
+    polymarket_asks: tuple[BookLevel, ...],
+    max_quantity: Decimal,
+) -> list[Decimal]:
+    """Quantities worth evaluating: every order-book level boundary, capped.
+
+    Net profit is a concave piecewise-linear function of quantity — payout grows linearly
+    while cost grows convexly as each leg eats into worse levels — so its maximum lies at
+    a level boundary. Evaluating only the deepest fillable size (the previous behaviour)
+    misses a profitable prefix sitting behind unprofitable depth.
+    """
+    boundaries: set[Decimal] = set()
+    for asks in (kalshi_asks, polymarket_asks):
+        cumulative = ZERO
+        for level in asks:
+            cumulative += level.quantity
+            capped = quantize_qty(min(cumulative, max_quantity))
+            if capped > ZERO:
+                boundaries.add(capped)
+            if cumulative >= max_quantity:
+                break
+
+    capped_max = quantize_qty(max_quantity)
+    if capped_max > ZERO:
+        boundaries.add(capped_max)
+    return sorted(boundaries)
+
+
+def _evaluate_quantity(
+    inputs: CalculationInputs,
+    quantity: Decimal,
+    kalshi_asks: tuple[BookLevel, ...],
+    polymarket_asks: tuple[BookLevel, ...],
+    kalshi_ceiling: Decimal,
+    polymarket_ceiling: Decimal,
+) -> _QuantityEvaluation | None:
+    """Cost out one candidate quantity, or ``None`` if both legs cannot fill it."""
+    settings = inputs.settings
+
+    kalshi_walk = walk_asks(
+        kalshi_asks,
+        quantity,
+        tick_size=inputs.kalshi_market.tick_size,
+        max_price=kalshi_ceiling,
+        min_quantity_increment=inputs.kalshi_market.min_quantity_increment,
+    )
+    polymarket_walk = walk_asks(
+        polymarket_asks,
+        quantity,
+        tick_size=inputs.polymarket_market.tick_size,
+        max_price=polymarket_ceiling,
+        min_quantity_increment=inputs.polymarket_market.min_quantity_increment,
+    )
+    # Unequal leg sizes are an unhedged bet, not an arbitrage.
+    if kalshi_walk.filled_quantity != quantity or polymarket_walk.filled_quantity != quantity:
+        return None
+
+    kalshi_fees = ceil_to(
+        _kalshi_fees(kalshi_walk, inputs.kalshi_market, inputs.kalshi_direct_member), CENT_EXP
+    )
+    polymarket_fees = _polymarket_fees(polymarket_walk, inputs.polymarket_market)
+
+    gross_cost = kalshi_walk.gross_cost + polymarket_walk.gross_cost
+    expected_payout = quantity * ONE_DOLLAR
+    slippage = gross_cost * (settings.slippage_buffer_pct / Decimal("100"))
+    operational = settings.operational_cost_usd
+
+    # The Polymarket leg pays out in USDC; converting it back to USD is neither free nor
+    # guaranteed at par. Charge the haircut against the portion of the payout that
+    # arrives as USDC.
+    usdc_allowance = ZERO
+    if inputs.polymarket_market.settlement_asset is SettlementAsset.USDC:
+        usdc_allowance = expected_payout * (inputs.usdc_haircut_pct / Decimal("100"))
+
+    net_profit = (
+        expected_payout
+        - gross_cost
+        - kalshi_fees
+        - polymarket_fees
+        - slippage
+        - operational
+        - usdc_allowance
+    )
+    return_on_capital = (net_profit / gross_cost) * Decimal("100") if gross_cost > ZERO else ZERO
+
+    return _QuantityEvaluation(
+        quantity=quantity,
+        kalshi_walk=kalshi_walk,
+        polymarket_walk=polymarket_walk,
+        kalshi_fees=kalshi_fees,
+        polymarket_fees=polymarket_fees,
+        gross_cost=gross_cost,
+        expected_payout=expected_payout,
+        slippage=slippage,
+        operational=operational,
+        usdc_allowance=usdc_allowance,
+        net_profit=net_profit,
+        return_on_capital=return_on_capital,
+    )
+
+
 def calculate_direction(
     inputs: CalculationInputs, direction: ArbDirection
 ) -> Opportunity | RejectedOpportunity:
@@ -142,68 +263,72 @@ def calculate_direction(
     kalshi_ceiling = ONE_DOLLAR - polymarket_asks[0].price
     polymarket_ceiling = ONE_DOLLAR - kalshi_asks[0].price
 
-    kalshi_walk = walk_asks(kalshi_asks, requested, max_price=kalshi_ceiling)
-    polymarket_walk = walk_asks(polymarket_asks, requested, max_price=polymarket_ceiling)
-
-    # Both legs must be filled at the same size or the position is not hedged.
-    executable = quantize_qty(min(kalshi_walk.filled_quantity, polymarket_walk.filled_quantity))
-    if executable <= ZERO:
+    candidates = _candidate_quantities(kalshi_asks, polymarket_asks, requested)
+    if not candidates:
         return reject(RejectionReason.NO_EXECUTABLE_QUANTITY, "no overlapping executable size")
 
-    # Re-walk both legs at the common size so costs reflect what is actually buyable.
-    kalshi_walk = walk_asks(kalshi_asks, executable, max_price=kalshi_ceiling)
-    polymarket_walk = walk_asks(polymarket_asks, executable, max_price=polymarket_ceiling)
-    if kalshi_walk.filled_quantity != executable or polymarket_walk.filled_quantity != executable:
+    evaluations = [
+        evaluation
+        for quantity in candidates
+        if (
+            evaluation := _evaluate_quantity(
+                inputs,
+                quantity,
+                kalshi_asks,
+                polymarket_asks,
+                kalshi_ceiling,
+                polymarket_ceiling,
+            )
+        )
+        is not None
+    ]
+    if not evaluations:
         return reject(
-            RejectionReason.NO_EXECUTABLE_QUANTITY,
-            "legs could not be filled at a common quantity",
+            RejectionReason.NO_EXECUTABLE_QUANTITY, "legs could not be filled at a common quantity"
         )
 
-    kalshi_fees = ceil_to(
-        _kalshi_fees(kalshi_walk, inputs.kalshi_market, inputs.kalshi_direct_member), CENT_EXP
-    )
-    polymarket_fees = _polymarket_fees(polymarket_walk, inputs.polymarket_market)
-
-    gross_cost = kalshi_walk.gross_cost + polymarket_walk.gross_cost
-    expected_payout = executable * ONE_DOLLAR
-
-    slippage = gross_cost * (settings.slippage_buffer_pct / Decimal("100"))
-    operational = settings.operational_cost_usd
-
-    # The Polymarket leg pays out in USDC; converting it back to USD is neither free nor
-    # guaranteed at par. Charge the haircut against the portion of the payout that
-    # arrives as USDC.
-    usdc_allowance = ZERO
-    if inputs.polymarket_market.settlement_asset is SettlementAsset.USDC:
-        usdc_allowance = expected_payout * (inputs.usdc_haircut_pct / Decimal("100"))
-
-    net_profit = (
-        expected_payout
-        - gross_cost
-        - kalshi_fees
-        - polymarket_fees
-        - slippage
-        - operational
-        - usdc_allowance
-    )
-
-    if net_profit <= ZERO:
-        return reject(
-            RejectionReason.NEGATIVE_AFTER_FEES,
-            f"net profit {quantize_price(net_profit)} after fees and buffers",
-        )
-    if net_profit < settings.min_net_profit_usd:
-        return reject(
-            RejectionReason.BELOW_MIN_PROFIT,
-            f"net profit {quantize_price(net_profit)} < minimum {settings.min_net_profit_usd}",
-        )
-
-    return_on_capital = (net_profit / gross_cost) * Decimal("100") if gross_cost > ZERO else ZERO
-    if return_on_capital < settings.min_return_pct:
+    qualifying = [
+        evaluation
+        for evaluation in evaluations
+        if evaluation.net_profit >= settings.min_net_profit_usd
+        and evaluation.return_on_capital >= settings.min_return_pct
+        and evaluation.net_profit > ZERO
+    ]
+    if not qualifying:
+        # Report against the best available size so the reason describes the real
+        # obstacle rather than an arbitrary depth.
+        best = max(evaluations, key=lambda item: item.net_profit)
+        if best.net_profit <= ZERO:
+            return reject(
+                RejectionReason.NEGATIVE_AFTER_FEES,
+                f"net profit {quantize_price(best.net_profit)} after fees and buffers "
+                f"at the best executable size {best.quantity}",
+            )
+        if best.net_profit < settings.min_net_profit_usd:
+            return reject(
+                RejectionReason.BELOW_MIN_PROFIT,
+                f"net profit {quantize_price(best.net_profit)} < minimum "
+                f"{settings.min_net_profit_usd}",
+            )
         return reject(
             RejectionReason.BELOW_MIN_RETURN,
-            f"return {quantize_price(return_on_capital)}% < minimum {settings.min_return_pct}%",
+            f"return {quantize_price(best.return_on_capital)}% < minimum "
+            f"{settings.min_return_pct}%",
         )
+
+    chosen = max(qualifying, key=lambda item: item.net_profit)
+    executable = chosen.quantity
+    kalshi_walk = chosen.kalshi_walk
+    polymarket_walk = chosen.polymarket_walk
+    kalshi_fees = chosen.kalshi_fees
+    polymarket_fees = chosen.polymarket_fees
+    gross_cost = chosen.gross_cost
+    expected_payout = chosen.expected_payout
+    slippage = chosen.slippage
+    operational = chosen.operational
+    usdc_allowance = chosen.usdc_allowance
+    net_profit = chosen.net_profit
+    return_on_capital = chosen.return_on_capital
 
     kalshi_leg = LegPlan(
         venue=Venue.KALSHI,

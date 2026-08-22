@@ -475,3 +475,95 @@ def test_extreme_prices_do_not_break_the_calculation(price: str) -> None:
     inputs = make_inputs(kalshi_yes_asks=levels((price, "100")))
     result = calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO)
     assert isinstance(result, (Opportunity, RejectedOpportunity))
+
+
+# --------------------------------------------------- executable-size optimization
+
+
+def test_profitable_prefix_is_found_behind_unprofitable_depth() -> None:
+    """A cheap top-of-book prefix must not be discarded because depth is unprofitable.
+
+    Regression for CODEX_REVIEW P1. The engine previously walked each leg to the largest
+    individually-allowed depth and evaluated only that single aggregate quantity, so one
+    contract at $0.40+$0.40 was rejected because 100 more at $0.59+$0.59 dragged the
+    aggregate negative. Net profit is concave in quantity, so the optimum lives at a
+    level boundary and must be searched for.
+    """
+    inputs = make_inputs(
+        kalshi_yes_asks=levels(("0.40", "1"), ("0.59", "100")),
+        poly_no_asks=levels(("0.40", "1"), ("0.59", "100")),
+        settings=OpportunitySettings(
+            min_net_profit_usd=Decimal("0"),
+            min_return_pct=Decimal("0"),
+            slippage_buffer_pct=Decimal("0"),
+            operational_cost_usd=Decimal("0"),
+            max_quantity=Decimal("101"),
+        ),
+    )
+    opp = as_opportunity(calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO))
+    assert opp.executable_quantity == Decimal("1")
+    assert opp.gross_acquisition_cost == Decimal("0.8000")
+    assert opp.net_profit > Decimal("0")
+
+
+def test_optimizer_picks_the_most_profitable_depth_not_the_deepest() -> None:
+    """Two profitable tiers: take both only if the second still adds profit."""
+    inputs = make_inputs(
+        kalshi_yes_asks=levels(("0.50", "10"), ("0.54", "10")),
+        poly_no_asks=levels(("0.40", "50")),
+        settings=OpportunitySettings(
+            min_net_profit_usd=Decimal("0"),
+            min_return_pct=Decimal("0"),
+            slippage_buffer_pct=Decimal("0"),
+            operational_cost_usd=Decimal("0"),
+            max_quantity=Decimal("50"),
+        ),
+    )
+    opp = as_opportunity(calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO))
+    # $0.54 + $0.40 = $0.94 still clears fees, so both tiers should be taken.
+    assert opp.executable_quantity == Decimal("20")
+
+
+def test_optimizer_stops_before_a_loss_making_tier() -> None:
+    inputs = make_inputs(
+        kalshi_yes_asks=levels(("0.50", "10"), ("0.62", "1000")),
+        poly_no_asks=levels(("0.40", "5000")),
+        settings=OpportunitySettings(
+            min_net_profit_usd=Decimal("0"),
+            min_return_pct=Decimal("0"),
+            slippage_buffer_pct=Decimal("0"),
+            operational_cost_usd=Decimal("0"),
+            max_quantity=Decimal("5000"),
+        ),
+    )
+    opp = as_opportunity(calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO))
+    assert opp.executable_quantity == Decimal("10")
+
+
+def test_optimizer_still_respects_the_leg_size_cap() -> None:
+    """The optimum can never exceed what the thinner leg can actually fill."""
+    inputs = make_inputs(
+        kalshi_yes_asks=levels(("0.50", "500")),
+        poly_no_asks=levels(("0.40", "7")),
+    )
+    opp = as_opportunity(calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO))
+    assert opp.executable_quantity == Decimal("7")
+    assert opp.kalshi_leg.quantity == opp.polymarket_leg.quantity
+
+
+def test_fixed_operational_cost_can_make_a_tiny_prefix_unprofitable() -> None:
+    """A one-contract edge cannot carry a fixed $0.10 operational charge."""
+    inputs = make_inputs(
+        kalshi_yes_asks=levels(("0.40", "1"), ("0.99", "100")),
+        poly_no_asks=levels(("0.40", "1"), ("0.99", "100")),
+        settings=OpportunitySettings(
+            min_net_profit_usd=Decimal("0.50"),
+            min_return_pct=Decimal("0"),
+            slippage_buffer_pct=Decimal("0"),
+            operational_cost_usd=Decimal("10.00"),
+            max_quantity=Decimal("101"),
+        ),
+    )
+    assert isinstance(
+        calculate_direction(inputs, ArbDirection.A_KALSHI_YES_POLY_NO), RejectedOpportunity
+    )
