@@ -148,15 +148,25 @@ configurable haircut, never assumed to be 1.0000 silently.
 
 ## Cross-cutting
 
+### C0. Venue terms — REVIEWED for Kalshi
+The Kalshi Developer Agreement was read in full on 2026-08-22. It materially constrains
+storage and sharing: API use is limited to facilitating your own trading, and data may not
+be shared with third parties without written authorization. See **docs/compliance.md**.
+Polymarket's Terms of Use is still unreviewed (JavaScript-rendered; needs a human).
+
 ### C1. Data retention — decision, not assumption
 Only normalized market metadata, order-book snapshots/deltas, and derived analytics are
 persisted, for operating and auditing this scanner. Raw API payloads are retained only in a
 bounded debug buffer (default off). No redistribution. See `docs/operations.md`.
-Both venues' developer terms may restrict storage and redistribution — the Kalshi Developer
-Agreement (<https://assets.kalshi.com/Kalshi-Developer-Agreement.pdf>) was **not machine-read**
-for this build and must be reviewed by a human before any live data collection.
+The Kalshi Developer Agreement has now been read (docs/compliance.md): §3.1 permits storage
+only "for purposes of facilitating your own trading on Kalshi" and forbids sharing with
+third parties absent written authorization. Retention is therefore bounded and operational,
+not archival. Polymarket's terms still require human review.
 
-### C2. Rate limits — ASSUMPTION
-Documented per-tier limits were not read for this build. The clients apply a conservative
-token-bucket limiter (default 5 req/s per venue) and honor `Retry-After` on 429. Confirm the
-real limits for your access tier before running against production.
+### C2. Rate limits — VERIFIED for Kalshi, ASSUMPTION for Polymarket
+Kalshi uses a token bucket, not a request rate: **200 read tokens/second on Basic**, most
+requests costing 10 tokens (~20 req/s), with burst up to twice the per-second budget.
+Higher tiers (Advanced 300, Expert 600, ... Prestige 10,000) are earned by volume or
+granted manually. The configured default of 5 req/s is deliberately well under Basic.
+Polymarket's limits remain unverified; the same conservative default applies.
+Both clients honor `Retry-After` on 429, as §4.3 of the Developer Agreement requires.

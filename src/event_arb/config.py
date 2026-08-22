@@ -117,6 +117,11 @@ class AlertSettings(BaseModel):
     console_enabled: bool = True
     webhook_url: str = ""
     webhook_timeout_seconds: float = 5.0
+    #: Kalshi Developer Agreement §3.1 forbids sharing API-accessed data with third
+    #: parties without prior written authorization. A webhook endpoint is a third party.
+    #: Leave false unless you hold that authorization; alerts then omit venue market
+    #: identifiers, prices, and sizes. See docs/compliance.md.
+    allow_third_party_market_data: bool = False
 
 
 class Settings(BaseSettings):

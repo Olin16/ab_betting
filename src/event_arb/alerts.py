@@ -4,6 +4,13 @@ Webhook payloads are built from an explicit allowlist of fields. That is deliber
 serializing an opportunity wholesale would eventually leak whatever new field someone
 adds upstream, and webhooks go to third-party endpoints. No credential, header, signed
 request, or raw API metadata ever enters a payload.
+
+**Venue data is withheld by default.** The Kalshi Developer Agreement §3.1 prohibits
+sharing API-accessed data with third parties without prior written authorization, and a
+webhook endpoint is a third party. Unless
+``alerts.allow_third_party_market_data`` is set, outbound alerts carry no market
+identifiers, prices, sizes, or book state — only the fact that an opportunity was
+detected. Console alerts are local and unaffected. See docs/compliance.md.
 """
 
 from __future__ import annotations
@@ -16,13 +23,45 @@ from event_arb.config import AlertSettings
 from event_arb.domain.models import Opportunity
 from event_arb.observability.logging import get_logger
 
-__all__ = ["AlertDispatcher", "build_alert_payload"]
+__all__ = ["AlertDispatcher", "build_alert_payload", "build_minimal_alert_payload"]
 
 log = get_logger(__name__)
 
 
+def build_minimal_alert_payload(opportunity: Opportunity) -> dict[str, Any]:
+    """A notification that carries **no venue market data**.
+
+    Kalshi Developer Agreement §3.1 prohibits sharing API-accessed data with third
+    parties without prior written authorization, and a webhook endpoint is a third party.
+    This payload therefore says only *that* an opportunity exists and how strong it is in
+    relative terms, with no market identifiers, prices, sizes, or book state. The operator
+    reads the details on the local dashboard.
+    """
+    return {
+        "type": "event_arb.opportunity.notice",
+        "label": opportunity.label.value,
+        "is_confirmed": opportunity.is_confirmed,
+        "direction": opportunity.direction.value,
+        "detected_at": opportunity.detected_at.isoformat(),
+        "risk_flag_count": len(opportunity.risk_flags),
+        "detail": (
+            "Venue market data withheld: sharing API-accessed data with third parties "
+            "requires prior written authorization (Kalshi Developer Agreement 3.1). "
+            "See the local dashboard for details."
+        ),
+        "disclaimer": (
+            "Not risk-free. Cross-venue execution is not atomic and settlement "
+            "equivalence is only asserted for manually approved pairs."
+        ),
+    }
+
+
 def build_alert_payload(opportunity: Opportunity) -> dict[str, Any]:
-    """Build a webhook-safe payload from an explicit field allowlist."""
+    """Build a full webhook payload from an explicit field allowlist.
+
+    Contains venue market data, so it may only be transmitted to a third party with the
+    venue's written authorization. See :func:`build_minimal_alert_payload`.
+    """
     return {
         "type": "event_arb.opportunity",
         # The label is first so a reader cannot miss whether this is a verified pair.
@@ -86,7 +125,11 @@ class AlertDispatcher:
         if not self._settings.webhook_url:
             return
 
-        payload = build_alert_payload(opportunity)
+        if self._settings.allow_third_party_market_data:
+            payload = build_alert_payload(opportunity)
+        else:
+            payload = build_minimal_alert_payload(opportunity)
+
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self._settings.webhook_timeout_seconds)
