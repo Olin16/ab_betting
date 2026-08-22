@@ -15,6 +15,19 @@ phantom arbitrage. So any ``seq`` that is not exactly ``previous + 1`` is treate
 gap: the affected book is marked stale immediately and a fresh snapshot is requested via
 ``update_subscription`` / ``get_snapshot``. Stale books are suppressed by the opportunity
 engine, so the failure mode is a missed opportunity rather than a fabricated one.
+
+**Sequence numbers are tracked per subscription (``sid``), one subscription per market.**
+
+The documentation attaches ``seq`` to the subscription, but a single subscription may
+name several markets — which leaves it ambiguous whether ``seq`` advances per market or
+across the whole subscription. Tracking per market under a shared subscription would
+manufacture a gap on every interleaved update if the counter is subscription-wide; the
+reverse assumption would silently miss real gaps.
+
+Rather than guess, each market gets its **own subscription command**, multiplexed over a
+single connection (Kalshi accepts multiple subscribe commands per connection, so this
+costs no extra sockets). Then ``sid`` identifies exactly one market and ``seq`` is
+unambiguous under either interpretation. See docs/api-assumptions.md A6.
 """
 
 from __future__ import annotations
@@ -128,30 +141,45 @@ class KalshiWebSocketStream:
         self._backoff = backoff or BackoffPolicy()
         self._rng = rng
         self._command_id = 0
-        self._states: dict[str, KalshiBookState] = {}
+        #: sid -> book state. One subscription per market, so a sid names one market.
+        self._states: dict[int, KalshiBookState] = {}
+        #: command id -> market, so a subscription confirmation can be bound to its market.
+        self._pending: dict[int, str] = {}
+        #: market -> sid, for targeted resync requests.
+        self._sids: dict[str, int] = {}
 
     def _next_id(self) -> int:
         self._command_id += 1
         return self._command_id
 
-    def _subscribe_payload(self, market_ids: list[str]) -> str:
+    def _subscribe_payload(self, market_id: str) -> str:
+        """One subscription per market, so ``sid`` unambiguously identifies a market."""
+        command_id = self._next_id()
+        self._pending[command_id] = market_id
         return json.dumps(
             {
-                "id": self._next_id(),
+                "id": command_id,
                 "cmd": "subscribe",
-                "params": {"channels": ["orderbook_delta"], "market_tickers": market_ids},
+                "params": {
+                    "channels": ["orderbook_delta"],
+                    "market_tickers": [market_id],
+                    # Pin the price convention rather than inheriting a default Kalshi
+                    # has said may change; a silent flip would invert NO-side prices.
+                    "use_yes_price": True,
+                },
             }
         )
 
-    def _resync_payload(self, market_ids: list[str]) -> str:
+    def _resync_payload(self, market_id: str) -> str:
         """Ask for a fresh snapshot without disturbing the subscription."""
-        return json.dumps(
-            {
-                "id": self._next_id(),
-                "cmd": "update_subscription",
-                "params": {"action": "get_snapshot", "market_tickers": market_ids},
-            }
-        )
+        params: dict[str, Any] = {
+            "action": "get_snapshot",
+            "market_tickers": [market_id],
+        }
+        sid = self._sids.get(market_id)
+        if sid is not None:
+            params["sid"] = sid
+        return json.dumps({"id": self._next_id(), "cmd": "update_subscription", "params": params})
 
     async def run(self, market_ids: list[str]) -> AsyncIterator[StreamEvent]:
         """Yield normalized book updates, reconnecting with jittered backoff."""
@@ -165,7 +193,12 @@ class KalshiWebSocketStream:
                     attempt = 0
                     self._health.connected = True
                     self._health.subscribed_markets = set(market_ids)
-                    await connection.send(self._subscribe_payload(market_ids))
+                    # One subscription command per market, multiplexed on one socket.
+                    self._pending.clear()
+                    self._sids.clear()
+                    self._states.clear()
+                    for market_id in market_ids:
+                        await connection.send(self._subscribe_payload(market_id))
                     async for event in self._consume(connection, market_ids):
                         yield event
             except asyncio.CancelledError:
@@ -208,26 +241,42 @@ class KalshiWebSocketStream:
         self, message: dict[str, Any], connection: ClientConnection, market_ids: list[str]
     ) -> StreamEvent | None:
         msg_type = message.get("type")
+
+        # Bind a subscription confirmation to the market whose command produced it.
+        if msg_type in {"subscribed", "ok"}:
+            self._bind_subscription(message)
+            return None
+
         payload = message.get("msg")
-        if msg_type in {"error", "subscribed", "ok"} or not isinstance(payload, dict):
+        if msg_type == "error" or not isinstance(payload, dict):
             if msg_type == "error":
                 self._health.record_error(str(payload))
                 log.warning("kalshi.ws.error_message")
             return None
 
-        market_id = payload.get("market_ticker")
-        if not isinstance(market_id, str):
+        sid = message.get("sid")
+        if not isinstance(sid, int):
             return None
+
+        state = self._states.get(sid)
+        if state is None:
+            # A sid we never bound: fall back to the ticker on the message itself so a
+            # confirmation we missed cannot silently drop the whole market's feed.
+            market_id = payload.get("market_ticker")
+            if not isinstance(market_id, str):
+                return None
+            state = KalshiBookState(market_id)
+            self._states[sid] = state
+            self._sids[market_id] = sid
 
         seq = message.get("seq")
         seq_int = seq if isinstance(seq, int) else None
-        state = self._states.setdefault(market_id, KalshiBookState(market_id))
         self._health.record_message()
         metrics.books_received.labels(venue=Venue.KALSHI.value).inc()
 
         if msg_type == "orderbook_snapshot":
             book = state.apply_snapshot(payload, seq_int)
-            return StreamEvent(Venue.KALSHI, market_id, book, is_snapshot=True)
+            return StreamEvent(Venue.KALSHI, state.market_id, book, is_snapshot=True)
 
         if msg_type != "orderbook_delta":
             return None
@@ -241,20 +290,40 @@ class KalshiWebSocketStream:
             metrics.resyncs.labels(venue=Venue.KALSHI.value).inc()
             log.warning(
                 "kalshi.ws.sequence_gap",
-                market_id=market_id,
+                market_id=state.market_id,
+                sid=sid,
                 expected=(state.last_seq or 0) + 1,
                 received=seq_int,
             )
             state.needs_resync = True
             stale = state.to_book(seq_int).model_copy(update={"is_stale": True})
-            await connection.send(self._resync_payload([market_id]))
-            return StreamEvent(Venue.KALSHI, market_id, stale, is_snapshot=False)
+            await connection.send(self._resync_payload(state.market_id))
+            return StreamEvent(Venue.KALSHI, state.market_id, stale, is_snapshot=False)
 
         try:
             book = state.apply_delta(payload, seq_int)
         except ValueError as exc:
-            log.warning("kalshi.ws.bad_delta", market_id=market_id, error=str(exc))
+            log.warning("kalshi.ws.bad_delta", market_id=state.market_id, error=str(exc))
             state.needs_resync = True
-            await connection.send(self._resync_payload([market_id]))
+            await connection.send(self._resync_payload(state.market_id))
             return None
-        return StreamEvent(Venue.KALSHI, market_id, book, is_snapshot=False)
+        return StreamEvent(Venue.KALSHI, state.market_id, book, is_snapshot=False)
+
+    def _bind_subscription(self, message: dict[str, Any]) -> None:
+        """Associate the sid Kalshi assigned with the market we subscribed for."""
+        command_id = message.get("id")
+        sid = message.get("sid")
+        if sid is None:
+            inner = message.get("msg")
+            if isinstance(inner, dict):
+                sid = inner.get("sid")
+        if not isinstance(sid, int):
+            return
+
+        market_id = self._pending.pop(command_id, None) if isinstance(command_id, int) else None
+        if market_id is None:
+            return
+
+        self._sids[market_id] = sid
+        self._states[sid] = KalshiBookState(market_id)
+        log.info("kalshi.ws.subscribed", market_id=market_id, sid=sid)

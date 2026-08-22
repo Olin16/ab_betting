@@ -6,14 +6,16 @@ a spread that does not exist. These tests pin the behaviour that prevents that.
 
 from __future__ import annotations
 
+import json
 import random
 from decimal import Decimal
 
 import pytest
 
-from event_arb.domain.enums import Outcome
-from event_arb.venues.base import BackoffPolicy
-from event_arb.venues.kalshi.websocket import KalshiBookState
+from event_arb.config import KalshiSettings
+from event_arb.domain.enums import Outcome, Venue
+from event_arb.venues.base import AdapterHealth, BackoffPolicy
+from event_arb.venues.kalshi.websocket import KalshiBookState, KalshiWebSocketStream
 from event_arb.venues.polymarket.websocket import PolymarketBookState
 
 SNAPSHOT = {
@@ -167,3 +169,143 @@ def test_backoff_jitter_spreads_reconnects() -> None:
 def test_backoff_rejects_zero_attempt() -> None:
     with pytest.raises(ValueError):
         BackoffPolicy().delay_for(0)
+
+
+# ------------------------------------------- per-market subscriptions keyed by sid
+
+
+class FakeConnection:
+    """Captures what the stream sends, so subscription shape can be asserted."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, object]] = []
+
+    async def send(self, payload: str) -> None:
+        self.sent.append(json.loads(payload))
+
+
+def make_stream() -> KalshiWebSocketStream:
+    return KalshiWebSocketStream(
+        settings=KalshiSettings(), health=AdapterHealth(venue=Venue.KALSHI)
+    )
+
+
+async def test_each_market_gets_its_own_subscription_command() -> None:
+    """One subscription per market makes sid unambiguous.
+
+    A single subscription naming several markets leaves it undefined whether seq advances
+    per market or across the subscription; tracking per market under a shared sid would
+    manufacture a gap on every interleaved update.
+    """
+    stream = make_stream()
+    payloads = [json.loads(stream._subscribe_payload(market)) for market in ("MKT-A", "MKT-B")]
+    assert [p["params"]["market_tickers"] for p in payloads] == [["MKT-A"], ["MKT-B"]]
+    assert payloads[0]["id"] != payloads[1]["id"]
+
+
+async def test_subscription_pins_the_price_convention() -> None:
+    """Kalshi has signalled the default may change; relying on it would flip NO prices."""
+    payload = json.loads(make_stream()._subscribe_payload("MKT-A"))
+    assert payload["params"]["use_yes_price"] is True
+
+
+async def test_sid_is_bound_to_the_market_that_requested_it() -> None:
+    stream = make_stream()
+    payload = json.loads(stream._subscribe_payload("MKT-A"))
+    stream._bind_subscription({"type": "subscribed", "id": payload["id"], "sid": 7})
+    assert stream._sids["MKT-A"] == 7
+    assert stream._states[7].market_id == "MKT-A"
+
+
+async def test_interleaved_markets_do_not_manufacture_sequence_gaps() -> None:
+    """Two markets advancing their own counters must not look like gaps to each other."""
+    stream = make_stream()
+    connection = FakeConnection()
+    for market, sid in (("MKT-A", 1), ("MKT-B", 2)):
+        payload = json.loads(stream._subscribe_payload(market))
+        stream._bind_subscription({"type": "subscribed", "id": payload["id"], "sid": sid})
+
+    snapshot = {"yes_dollars_fp": [["0.5000", "100.00"]], "no_dollars_fp": []}
+    for sid in (1, 2):
+        await stream._handle(
+            {"type": "orderbook_snapshot", "sid": sid, "seq": 1, "msg": snapshot},
+            connection,  # type: ignore[arg-type]
+            [],
+        )
+
+    # Interleave deltas; each subscription's seq advances independently.
+    for sid, seq in ((1, 2), (2, 2), (1, 3), (2, 3)):
+        event = await stream._handle(
+            {
+                "type": "orderbook_delta",
+                "sid": sid,
+                "seq": seq,
+                "msg": {"price_dollars": "0.5000", "delta_fp": "1.00", "side": "yes"},
+            },
+            connection,  # type: ignore[arg-type]
+            [],
+        )
+        assert event is not None
+        assert event.book.is_stale is False
+
+    assert stream._health.sequence_gaps == 0
+    assert not [m for m in connection.sent if m.get("cmd") == "update_subscription"]
+
+
+async def test_a_real_gap_on_one_subscription_resyncs_only_that_market() -> None:
+    stream = make_stream()
+    connection = FakeConnection()
+    for market, sid in (("MKT-A", 1), ("MKT-B", 2)):
+        payload = json.loads(stream._subscribe_payload(market))
+        stream._bind_subscription({"type": "subscribed", "id": payload["id"], "sid": sid})
+
+    snapshot = {"yes_dollars_fp": [["0.5000", "100.00"]], "no_dollars_fp": []}
+    for sid in (1, 2):
+        await stream._handle(
+            {"type": "orderbook_snapshot", "sid": sid, "seq": 1, "msg": snapshot},
+            connection,  # type: ignore[arg-type]
+            [],
+        )
+
+    # Skip seq 2 on subscription 1 only.
+    event = await stream._handle(
+        {
+            "type": "orderbook_delta",
+            "sid": 1,
+            "seq": 5,
+            "msg": {"price_dollars": "0.5000", "delta_fp": "1.00", "side": "yes"},
+        },
+        connection,  # type: ignore[arg-type]
+        [],
+    )
+    assert event is not None
+    assert event.book.is_stale is True
+    assert stream._health.sequence_gaps == 1
+
+    resyncs = [m for m in connection.sent if m.get("cmd") == "update_subscription"]
+    assert len(resyncs) == 1
+    assert resyncs[0]["params"]["market_tickers"] == ["MKT-A"]
+    assert resyncs[0]["params"]["sid"] == 1
+    # The healthy subscription is untouched.
+    assert stream._states[2].needs_resync is False
+
+
+async def test_unbound_sid_falls_back_to_the_ticker_on_the_message() -> None:
+    """A missed confirmation must not silently drop a market's whole feed."""
+    stream = make_stream()
+    event = await stream._handle(
+        {
+            "type": "orderbook_snapshot",
+            "sid": 99,
+            "seq": 1,
+            "msg": {
+                "market_ticker": "MKT-C",
+                "yes_dollars_fp": [["0.5000", "100.00"]],
+                "no_dollars_fp": [],
+            },
+        },
+        FakeConnection(),  # type: ignore[arg-type]
+        [],
+    )
+    assert event is not None
+    assert event.market_id == "MKT-C"

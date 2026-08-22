@@ -64,8 +64,18 @@ Envelope: `{"type", "sid", "seq", "msg"}`. Subscribe: `{"id", "cmd": "subscribe"
 - `orderbook_delta.msg`: `market_ticker`, `market_id`, `price_dollars`, `delta_fp`, `side`, `ts_ms`
 - Gap recovery: `update_subscription` with the `get_snapshot` action returns a fresh
   `orderbook_snapshot` without modifying the subscription.
-- **ASSUMPTION:** `seq` is per-subscription and strictly increments by 1. The implementation
-  treats any non-`+1` step as a gap and forces resync, which is safe either way.
+- **RESOLVED BY DESIGN:** whether `seq` advances per market or per subscription is
+  ambiguous when one subscription names several markets, and guessing either way is
+  unsafe — a subscription-wide counter would look like a gap on every interleaved update,
+  while the opposite assumption would silently miss real gaps. The implementation
+  therefore issues **one subscription command per market**, multiplexed over a single
+  connection, and tracks `seq` against the assigned `sid`. A `sid` then names exactly one
+  market and the counter is unambiguous under either interpretation. Verify the actual
+  semantics during the supervised smoke test; the design is correct regardless.
+- **ASSUMPTION:** multiple `subscribe` commands are accepted on one connection. If Kalshi
+  rejects this, fall back to one connection per market.
+- `use_yes_price: true` is now sent explicitly rather than relying on the default, which
+  Kalshi has signalled may change; a silent flip would invert NO-side prices.
 
 ### A7. Fees — VERIFIED formula, ASSUMPTION on parameters
 Sources: <https://docs.kalshi.com/getting_started/fee_rounding>, Kalshi fee schedule (July 2026).
