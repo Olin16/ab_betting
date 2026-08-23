@@ -196,8 +196,15 @@ class VenueAdapter(ABC):
         self.health = AdapterHealth(venue=venue)
 
     @abstractmethod
-    async def discover_markets(self, limit: int | None = None) -> list[VenueMarket]:
-        """List tradable markets with normalized metadata."""
+    async def discover_markets(
+        self, limit: int | None = None, market_ids: list[str] | None = None
+    ) -> list[VenueMarket]:
+        """List tradable markets with normalized metadata.
+
+        ``market_ids`` restricts retrieval to specific markets. A trial names the handful
+        of markets it watches, so fetching only those keeps startup bounded and keeps API
+        access narrowly tied to the markets under trial.
+        """
 
     @abstractmethod
     async def fetch_orderbook(self, market_id: str) -> OrderBook:

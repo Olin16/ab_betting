@@ -50,9 +50,17 @@ class RestoreReport:
 
 
 def restore_pairs(
-    stored: dict[str, MarketPair], markets: dict[tuple[Venue, str], VenueMarket]
+    stored: dict[str, MarketPair],
+    markets: dict[tuple[Venue, str], VenueMarket],
+    observed: set[tuple[Venue, str]] | None = None,
 ) -> tuple[dict[str, MarketPair], RestoreReport]:
     """Return pairs safe to use, suspending approvals that no longer hold.
+
+    ``observed`` names the markets whose metadata was actually retrieved from the venue
+    during this run. An approval may only be restored when **both** legs were observed:
+    a persisted copy will always match the hash it was stored with, so validating against
+    cached metadata proves nothing about the venue's current rules. Passing ``None``
+    disables the check and is intended only for tests of the hash logic itself.
 
     Unapproved pairs pass through untouched — there is no claim to invalidate.
     """
@@ -65,8 +73,10 @@ def restore_pairs(
             report.restored.append(pair)
             continue
 
-        kalshi = markets.get((Venue.KALSHI, pair.kalshi_market_id))
-        polymarket = markets.get((Venue.POLYMARKET, pair.polymarket_market_id))
+        kalshi_key = (Venue.KALSHI, pair.kalshi_market_id)
+        polymarket_key = (Venue.POLYMARKET, pair.polymarket_market_id)
+        kalshi = markets.get(kalshi_key)
+        polymarket = markets.get(polymarket_key)
 
         if kalshi is None or polymarket is None:
             missing = "Kalshi" if kalshi is None else "Polymarket"
@@ -78,6 +88,24 @@ def restore_pairs(
             result[pair_id] = suspended
             report.suspended.append((suspended, reason))
             continue
+
+        if observed is not None:
+            unobserved = [
+                name
+                for name, key in (("Kalshi", kalshi_key), ("Polymarket", polymarket_key))
+                if key not in observed
+            ]
+            if unobserved:
+                # Cached metadata matches the hash it was stored with by construction, so
+                # it can never falsify an approval. Only fresh venue data can.
+                reason = (
+                    f"{' and '.join(unobserved)} metadata was not retrieved from the venue "
+                    "during this run; approval cannot be verified against current rules"
+                )
+                suspended = suspend_pair(pair, reason)
+                result[pair_id] = suspended
+                report.suspended.append((suspended, reason))
+                continue
 
         check = check_for_rules_change(pair, kalshi, polymarket)
         if check.changed:

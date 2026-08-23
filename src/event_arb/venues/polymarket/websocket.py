@@ -260,6 +260,7 @@ class PolymarketWebSocketStream:
             if not isinstance(changes, list):
                 return None
             touched: PolymarketBookState | None = None
+            corrupted = False
             for change in changes:
                 if not isinstance(change, dict):
                     continue
@@ -275,7 +276,12 @@ class PolymarketWebSocketStream:
                 try:
                     pending.apply_price_change(outcome, change)
                 except ValueError as exc:
+                    # An update we could not apply means the book is now missing a change
+                    # the venue has already made. Skipping it silently would leave a
+                    # divergent book eligible for opportunity detection.
                     log.warning("polymarket.ws.bad_price_change", error=str(exc))
+                    corrupted = True
+                    touched = pending
                     continue
                 touched = pending
             if touched is None:
@@ -284,9 +290,16 @@ class PolymarketWebSocketStream:
             if ts is not None:
                 touched.exchange_timestamp = _parse_ms(ts)
             metrics.books_received.labels(venue=Venue.POLYMARKET.value).inc()
-            return StreamEvent(
-                Venue.POLYMARKET, touched.market_id, touched.to_book(), is_snapshot=False
-            )
+
+            book = touched.to_book()
+            if corrupted:
+                # Without sequence numbers there is no resync command to send; the
+                # periodic REST resynchronization will repair it. Until then the book
+                # must not be treated as usable.
+                touched.seen_snapshot = False
+                metrics.resyncs.labels(venue=Venue.POLYMARKET.value).inc()
+                book = book.model_copy(update={"is_stale": True})
+            return StreamEvent(Venue.POLYMARKET, touched.market_id, book, is_snapshot=False)
 
         if event_type == "tick_size_change":
             resolved = self._resolve(message.get("asset_id"))

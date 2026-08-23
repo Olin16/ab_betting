@@ -309,3 +309,71 @@ async def test_unbound_sid_falls_back_to_the_ticker_on_the_message() -> None:
     )
     assert event is not None
     assert event.market_id == "MKT-C"
+
+
+# ------------------------------------- malformed updates must stale the book at once
+
+
+async def test_malformed_delta_emits_a_stale_book_not_silence() -> None:
+    """A delta we could not apply leaves the book missing a change the venue has made.
+
+    Returning None left the previous book eligible for opportunity detection until its
+    freshness timer happened to expire — the same corruption a sequence gap causes, but
+    without the stale marker that suppresses it.
+    """
+    stream = make_stream()
+    connection = FakeConnection()
+    payload = json.loads(stream._subscribe_payload("MKT-A"))
+    stream._bind_subscription({"type": "subscribed", "id": payload["id"], "sid": 1})
+    await stream._handle(
+        {
+            "type": "orderbook_snapshot",
+            "sid": 1,
+            "seq": 1,
+            "msg": {"yes_dollars_fp": [["0.5000", "100.00"]], "no_dollars_fp": []},
+        },
+        connection,  # type: ignore[arg-type]
+        [],
+    )
+
+    event = await stream._handle(
+        {
+            "type": "orderbook_delta",
+            "sid": 1,
+            "seq": 2,
+            "msg": {"price_dollars": "not-a-price", "delta_fp": "1.00", "side": "yes"},
+        },
+        connection,  # type: ignore[arg-type]
+        [],
+    )
+    assert event is not None, "malformed delta must still emit an event"
+    assert event.book.is_stale is True
+    assert stream._states[1].needs_resync is True
+    assert [m for m in connection.sent if m.get("cmd") == "update_subscription"]
+
+
+async def test_polymarket_malformed_price_change_stales_the_book() -> None:
+    from event_arb.config import PolymarketSettings
+    from event_arb.venues.polymarket.websocket import PolymarketWebSocketStream
+
+    stream = PolymarketWebSocketStream(
+        settings=PolymarketSettings(),
+        health=AdapterHealth(venue=Venue.POLYMARKET),
+        token_map={"MKT": {"YES": "tok-yes", "NO": "tok-no"}},
+    )
+    stream._handle(
+        {
+            "event_type": "book",
+            "asset_id": "tok-yes",
+            "bids": [{"price": "0.61", "size": "400"}],
+            "asks": [{"price": "0.64", "size": "250"}],
+        }
+    )
+    event = stream._handle(
+        {
+            "event_type": "price_change",
+            "price_changes": [{"asset_id": "tok-yes", "price": "bad", "size": "1", "side": "BUY"}],
+        }
+    )
+    assert event is not None
+    assert event.book.is_stale is True

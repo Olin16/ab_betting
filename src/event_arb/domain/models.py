@@ -27,6 +27,7 @@ from event_arb.domain.enums import (
 from event_arb.domain.money import ZERO, quantize_price, quantize_qty
 
 __all__ = [
+    "SETTLEMENT_FINGERPRINT_VERSION",
     "BookLevel",
     "CanonicalMarket",
     "ExecutionPlan",
@@ -48,6 +49,12 @@ class _Frozen(BaseModel):
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+#: Bump when the set of fields below changes. A bump invalidates every stored approval,
+#: forcing re-review — which is the point: an old approval was granted against a weaker
+#: definition of "unchanged".
+SETTLEMENT_FINGERPRINT_VERSION = "v2"
 
 
 def rules_hash(*parts: str | None) -> str:
@@ -131,8 +138,37 @@ class VenueMarket(_Frozen):
     last_updated: datetime = Field(default_factory=_utcnow)
 
     @property
+    def settlement_fingerprint(self) -> str:
+        """Versioned hash of every field a human weighs when judging equivalence.
+
+        An approval is a statement that two contracts settle identically. Hashing only
+        the prose was too narrow: a venue could move the close time, add an outcome, or
+        change the settlement currency without touching a word of the rules text, and the
+        approval would survive unchanged. Everything that can decide *who gets paid* is
+        therefore in the fingerprint.
+
+        The :data:`SETTLEMENT_FINGERPRINT_VERSION` prefix is deliberate. Bumping it
+        invalidates every stored approval, which is the correct outcome: those approvals
+        were granted against a weaker definition of "unchanged" and deserve re-review.
+        """
+        close = self.close_time.isoformat() if self.close_time else None
+        return rules_hash(
+            SETTLEMENT_FINGERPRINT_VERSION,
+            self.title,
+            self.rules_text,
+            self.settlement_source,
+            # Cutoff, expressed as an absolute instant so a timezone change is visible.
+            close,
+            # Outcome set: an added or renamed outcome changes what "YES" means.
+            "|".join(self.outcomes),
+            # USD and USDC do not settle alike.
+            self.settlement_asset.value,
+        )
+
+    @property
     def rules_hash(self) -> str:
-        return rules_hash(self.title, self.rules_text, self.settlement_source)
+        """Backwards-compatible alias for :attr:`settlement_fingerprint`."""
+        return self.settlement_fingerprint
 
 
 class RuleDifference(_Frozen):

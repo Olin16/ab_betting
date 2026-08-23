@@ -305,8 +305,14 @@ class KalshiWebSocketStream:
         except ValueError as exc:
             log.warning("kalshi.ws.bad_delta", market_id=state.market_id, error=str(exc))
             state.needs_resync = True
+            # Emit a stale book rather than swallowing the failure. A malformed delta
+            # means an update we could not apply, so the stored book is now missing a
+            # change the venue has already made — exactly as damaging as a sequence gap.
+            # Returning None would leave the previous book eligible for detection until
+            # its freshness timer happened to expire.
+            stale = state.to_book(seq_int).model_copy(update={"is_stale": True})
             await connection.send(self._resync_payload(state.market_id))
-            return None
+            return StreamEvent(Venue.KALSHI, state.market_id, stale, is_snapshot=False)
         return StreamEvent(Venue.KALSHI, state.market_id, book, is_snapshot=False)
 
     def _bind_subscription(self, message: dict[str, Any]) -> None:

@@ -164,6 +164,18 @@ storage and sharing: API use is limited to facilitating your own trading, and da
 be shared with third parties without written authorization. See **docs/compliance.md**.
 Polymarket's Terms of Use is still unreviewed (JavaScript-rendered; needs a human).
 
+### C0b. Approval fingerprint — decision
+An approval is verified against a **versioned settlement fingerprint**
+(`SETTLEMENT_FINGERPRINT_VERSION`), not just the rules prose. It covers title, rules text,
+settlement source, close time (as an absolute instant, so a timezone change is visible),
+the outcome set, and the settlement asset. Hashing prose alone let a venue move the cutoff
+or add an outcome without invalidating an approval. Bumping the version invalidates every
+stored approval and forces re-review, which is the intended behaviour.
+
+Approvals are additionally only restored when **both legs were retrieved from the venue
+during the current run**. Cached metadata matches by construction the hash it was stored
+with, so it can never falsify an approval.
+
 ### C1. Data retention — decision, not assumption
 Only normalized market metadata, order-book snapshots/deltas, and derived analytics are
 persisted, for operating and auditing this scanner. Raw API payloads are retained only in a

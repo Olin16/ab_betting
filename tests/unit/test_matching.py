@@ -410,3 +410,89 @@ def test_trailing_operator_takes_the_preceding_number() -> None:
     value, operator, _ = extract_threshold("Will NYC hit 90F or higher on August 22, 2026?")
     assert value == Decimal("90")
     assert operator is ComparisonOperator.GTE
+
+
+# --------------------------------------------------- settlement fingerprint scope
+
+
+def _fingerprint_market(**overrides: object) -> VenueMarket:
+    base: dict[str, object] = {
+        "venue": Venue.KALSHI,
+        "venue_market_id": "K",
+        "title": "Will X happen?",
+        "rules_text": "Resolves Yes if X happens.",
+        "settlement_source": "Official source",
+        "close_time": datetime(2026, 9, 17, 18, 0, tzinfo=UTC),
+        "fee_config": FEE,
+    }
+    return VenueMarket(**{**base, **overrides})  # type: ignore[arg-type]
+
+
+def test_fingerprint_is_stable_for_an_unchanged_market() -> None:
+    assert _fingerprint_market().settlement_fingerprint == (
+        _fingerprint_market().settlement_fingerprint
+    )
+
+
+def test_cosmetic_whitespace_does_not_change_the_fingerprint() -> None:
+    assert (
+        _fingerprint_market(rules_text="Resolves   Yes\n if X happens.").settlement_fingerprint
+        == _fingerprint_market().settlement_fingerprint
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("rules_text", "Resolves Yes if Y happens."),
+        ("title", "Will Y happen?"),
+        ("settlement_source", "A different source"),
+        # Settlement-critical fields that the old prose-only hash silently ignored:
+        ("close_time", datetime(2026, 9, 18, 18, 0, tzinfo=UTC)),
+        ("outcomes", ("YES", "NO", "VOID")),
+        ("settlement_asset", SettlementAsset.USDC),
+    ],
+)
+def test_settlement_critical_changes_change_the_fingerprint(field: str, value: object) -> None:
+    """A venue can move the cutoff or add an outcome without touching a word of prose.
+
+    Hashing only the text left an approval alive through exactly those changes.
+    """
+    assert (
+        _fingerprint_market(**{field: value}).settlement_fingerprint
+        != _fingerprint_market().settlement_fingerprint
+    )
+
+
+def test_timezone_change_is_visible_via_absolute_instant() -> None:
+    """Same wall clock, different offset, is a different cutoff."""
+    from datetime import timedelta, timezone
+
+    et = timezone(timedelta(hours=-4))
+    assert (
+        _fingerprint_market(
+            close_time=datetime(2026, 9, 17, 18, 0, tzinfo=et)
+        ).settlement_fingerprint
+        != _fingerprint_market().settlement_fingerprint
+    )
+
+
+def test_fingerprint_is_versioned_so_a_bump_invalidates_old_approvals() -> None:
+    from event_arb.domain.models import SETTLEMENT_FINGERPRINT_VERSION, rules_hash
+
+    market = _fingerprint_market()
+    without_version = rules_hash(market.title, market.rules_text, market.settlement_source)
+    assert market.settlement_fingerprint != without_version
+    assert SETTLEMENT_FINGERPRINT_VERSION
+
+
+def test_close_time_change_suspends_an_approved_pair() -> None:
+    """End to end: moving the cutoff must invalidate the approval."""
+    kalshi = _fingerprint_market()
+    polymarket = _fingerprint_market(venue=Venue.POLYMARKET, venue_market_id="P")
+    approved = approve_pair(_pair(), kalshi, polymarket, approved_by="analyst")
+    assert approved.is_tradable_pair is True
+
+    moved = kalshi.model_copy(update={"close_time": datetime(2026, 9, 20, 18, 0, tzinfo=UTC)})
+    assert check_for_rules_change(approved, moved, polymarket).changed is True
+    assert enforce_rules_integrity(approved, moved, polymarket).is_tradable_pair is False

@@ -74,6 +74,11 @@ def build_adapters(settings: Settings) -> dict[Venue, VenueAdapter]:
 @dataclass
 class ScannerState:
     markets: dict[tuple[Venue, str], VenueMarket] = field(default_factory=dict)
+    #: Markets whose metadata was retrieved from the venue during *this* process run.
+    #: Persisted metadata does not count: a cached copy trivially matches the hash it was
+    #: stored with, so trusting it would let an approval survive without the current rules
+    #: ever being fetched.
+    observed_markets: set[tuple[Venue, str]] = field(default_factory=set)
     pairs: dict[str, MarketPair] = field(default_factory=dict)
     last_scan: ScanResult | None = None
     paper_trades: list[PaperTrade] = field(default_factory=list)
@@ -107,19 +112,38 @@ class Scanner:
 
     # ------------------------------------------------------------------ discovery
 
-    async def discover(self) -> list[VenueMarket]:
-        """Load markets from every adapter into scanner state."""
+    async def discover(self, market_ids: dict[Venue, list[str]] | None = None) -> list[VenueMarket]:
+        """Load market metadata into scanner state.
+
+        When trial pairs are configured, only those markets are retrieved. Listing an
+        entire venue at trial scale is slow, is subject to pagination we have not
+        implemented, and widens API access beyond the markets under trial — which §3 of
+        the Kalshi Developer Agreement ties to your own trading.
+        """
+        targets = market_ids
+        if targets is None and self.settings.trial.watched_pairs:
+            targets = self.watched_markets()
+
         discovered: list[VenueMarket] = []
         for venue, adapter in self.adapters.items():
+            wanted = targets.get(venue) if targets else None
+            if targets is not None and not wanted:
+                continue
             try:
-                markets = await adapter.discover_markets()
+                markets = await adapter.discover_markets(market_ids=wanted)
             except Exception as exc:
                 log.error("scanner.discovery_failed", venue=venue.value, error=str(exc))
                 continue
             for market in markets:
-                self.state.markets[(venue, market.venue_market_id)] = market
+                key = (venue, market.venue_market_id)
+                self.state.markets[key] = market
+                self.state.observed_markets.add(key)
             discovered.extend(markets)
-        log.info("scanner.discovered", count=len(discovered))
+        log.info(
+            "scanner.discovered",
+            count=len(discovered),
+            targeted=targets is not None,
+        )
         return discovered
 
     def watched_markets(self) -> dict[Venue, list[str]]:
@@ -413,7 +437,10 @@ class Scanner:
         merged_markets = {**stored_markets, **self.state.markets}
         self.state.markets = merged_markets
 
-        pairs, report = restore_pairs(stored_pairs, merged_markets)
+        # Only markets fetched from the venue during this run can verify an approval.
+        pairs, report = restore_pairs(
+            stored_pairs, merged_markets, observed=self.state.observed_markets
+        )
         for pair_id, pair in pairs.items():
             self.state.pairs.setdefault(pair_id, pair)
 

@@ -22,6 +22,7 @@ from event_arb.venues.base import (
     StreamEvent,
     TransientError,
     VenueAdapter,
+    VenueError,
 )
 from event_arb.venues.polymarket.geoblock import GeoblockChecker, GeoblockStatus
 from event_arb.venues.polymarket.mapper import build_book, parse_market
@@ -106,7 +107,12 @@ class PolymarketClient(VenueAdapter):
 
     # --------------------------------------------------------------------- adapter
 
-    async def discover_markets(self, limit: int | None = None) -> list[VenueMarket]:
+    async def discover_markets(
+        self, limit: int | None = None, market_ids: list[str] | None = None
+    ) -> list[VenueMarket]:
+        if market_ids:
+            return await self._fetch_markets_by_id(market_ids)
+
         params: dict[str, Any] = {"active": "true", "closed": "false"}
         if limit is not None:
             params["limit"] = limit
@@ -123,6 +129,31 @@ class PolymarketClient(VenueAdapter):
                 market = parse_market(entry)
             except MarketDataError as exc:
                 log.warning("polymarket.market.parse_failed", error=str(exc))
+                continue
+            self._remember_tokens(market)
+            markets.append(market)
+        return markets
+
+    async def _fetch_markets_by_id(self, condition_ids: list[str]) -> list[VenueMarket]:
+        """Retrieve named markets individually rather than listing the whole venue."""
+        markets: list[VenueMarket] = []
+        for condition_id in condition_ids:
+            try:
+                payload = await self._get(self._settings.clob_base_url, f"/markets/{condition_id}")
+            except VenueError as exc:
+                log.warning(
+                    "polymarket.market.fetch_failed", market_id=condition_id, error=str(exc)
+                )
+                continue
+            if not isinstance(payload, dict):
+                log.warning("polymarket.market.unexpected_shape", market_id=condition_id)
+                continue
+            try:
+                market = parse_market(payload)
+            except MarketDataError as exc:
+                log.warning(
+                    "polymarket.market.parse_failed", market_id=condition_id, error=str(exc)
+                )
                 continue
             self._remember_tokens(market)
             markets.append(market)

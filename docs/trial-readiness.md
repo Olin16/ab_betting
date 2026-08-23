@@ -62,6 +62,16 @@ for the fill-failure evidence to mean anything.
 with a default password; the dashboard has no authentication and its approval endpoint is
 state-changing and unauthenticated. Health alerting is not wired.
 
+## Review fixes applied
+
+- Approvals now require **freshly observed** metadata for both legs; cached metadata
+  cannot verify an approval because it matches its own stored hash by construction.
+- The approval fingerprint is **versioned** and covers close time, outcome set and
+  settlement asset, not just prose.
+- Discovery is scoped to watched markets, not only order-book refresh.
+- Malformed WebSocket updates now emit an immediately stale book on both venues, matching
+  sequence-gap handling. Previously the stored book stayed eligible until it aged out.
+
 ## Human gates
 
 - [ ] **Polymarket Terms of Use** — still unreviewed. The page is JavaScript-rendered and

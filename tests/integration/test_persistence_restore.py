@@ -270,3 +270,65 @@ async def test_scanner_without_a_database_still_works(fixture_dir: Path) -> None
     scanner.seed_watched_pairs()
     await scanner.refresh_books()
     assert await scanner.prune_snapshots() == 0
+
+
+# ------------------------------- approvals require freshly observed venue metadata
+
+
+async def test_approval_is_suspended_when_metadata_was_not_freshly_observed(
+    fixture_dir: Path, database: Database
+) -> None:
+    """Cached metadata cannot verify an approval.
+
+    A persisted market copy matches by construction the hash it was stored with, so
+    validating an approval against it proves nothing about the venue's current rules.
+    If discovery did not retrieve a leg this run, the approval must not be restored.
+    """
+    settings = make_settings(fixture_dir)
+    first = await boot(settings, database)
+    await first.persist_markets()
+    pair_id = next(iter(first.state.pairs))
+    await first.approve_and_persist(pair_id, approved_by="reviewer@example.com")
+
+    # Restart WITHOUT discovery: metadata comes only from storage.
+    second = Scanner(settings, database=database)
+    await second.restore()
+
+    assert second.state.pairs[pair_id].is_tradable_pair is False
+    assert second.last_restore is not None
+    assert second.last_restore.approvals_kept == 0
+    reason = second.last_restore.suspended[0][1]
+    assert "not retrieved from the venue" in reason
+
+
+async def test_approval_survives_when_both_legs_are_freshly_observed(
+    fixture_dir: Path, database: Database
+) -> None:
+    settings = make_settings(fixture_dir)
+    first = await boot(settings, database)
+    await first.persist_markets()
+    pair_id = next(iter(first.state.pairs))
+    await first.approve_and_persist(pair_id, approved_by="reviewer@example.com")
+
+    second = Scanner(settings, database=database)
+    await second.discover()  # both legs retrieved from the venue
+    await second.restore()
+    assert second.state.pairs[pair_id].is_tradable_pair is True
+
+
+async def test_partial_discovery_suspends_the_approval(
+    fixture_dir: Path, database: Database
+) -> None:
+    """One leg observed is not enough: both sides of an equivalence must be current."""
+    settings = make_settings(fixture_dir)
+    first = await boot(settings, database)
+    await first.persist_markets()
+    pair_id = next(iter(first.state.pairs))
+    await first.approve_and_persist(pair_id, approved_by="reviewer@example.com")
+
+    second = Scanner(settings, database=database)
+    await second.discover({Venue.KALSHI: [KALSHI_FED]})  # Polymarket leg never fetched
+    await second.restore()
+    assert second.state.pairs[pair_id].is_tradable_pair is False
+    assert second.last_restore is not None
+    assert "Polymarket" in second.last_restore.suspended[0][1]

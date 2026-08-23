@@ -25,6 +25,7 @@ from event_arb.venues.base import (
     StreamEvent,
     TransientError,
     VenueAdapter,
+    VenueError,
 )
 from event_arb.venues.kalshi.auth import KalshiSigner
 from event_arb.venues.kalshi.mapper import parse_market, parse_orderbook
@@ -103,7 +104,12 @@ class KalshiClient(VenueAdapter):
 
     # -------------------------------------------------------------------- adapter
 
-    async def discover_markets(self, limit: int | None = None) -> list[VenueMarket]:
+    async def discover_markets(
+        self, limit: int | None = None, market_ids: list[str] | None = None
+    ) -> list[VenueMarket]:
+        if market_ids:
+            return await self._fetch_markets_by_ticker(market_ids)
+
         params: dict[str, Any] = {"status": "open"}
         if limit is not None:
             params["limit"] = min(limit, 1000)
@@ -121,6 +127,25 @@ class KalshiClient(VenueAdapter):
             except MarketDataError as exc:
                 # One malformed market must not blind the scanner to every other market.
                 log.warning("kalshi.market.parse_failed", error=str(exc))
+        return markets
+
+    async def _fetch_markets_by_ticker(self, tickers: list[str]) -> list[VenueMarket]:
+        """Retrieve named markets individually rather than listing the whole venue."""
+        markets: list[VenueMarket] = []
+        for ticker in tickers:
+            try:
+                payload = await self._get(f"/markets/{ticker}")
+            except VenueError as exc:
+                log.warning("kalshi.market.fetch_failed", ticker=ticker, error=str(exc))
+                continue
+            entry = payload.get("market", payload)
+            if not isinstance(entry, dict):
+                log.warning("kalshi.market.unexpected_shape", ticker=ticker)
+                continue
+            try:
+                markets.append(parse_market(entry))
+            except MarketDataError as exc:
+                log.warning("kalshi.market.parse_failed", ticker=ticker, error=str(exc))
         return markets
 
     async def fetch_orderbook(self, market_id: str) -> OrderBook:

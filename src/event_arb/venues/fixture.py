@@ -99,7 +99,9 @@ class FixtureAdapter(VenueAdapter):
 
     # --------------------------------------------------------------------- adapter
 
-    async def discover_markets(self, limit: int | None = None) -> list[VenueMarket]:
+    async def discover_markets(
+        self, limit: int | None = None, market_ids: list[str] | None = None
+    ) -> list[VenueMarket]:
         raw = load_json(self._dir / "markets.json")
         entries = raw.get("markets", raw.get("data", [])) if isinstance(raw, dict) else raw
         if not isinstance(entries, list):
@@ -107,6 +109,9 @@ class FixtureAdapter(VenueAdapter):
 
         parse = parse_kalshi_market if self.venue is Venue.KALSHI else parse_poly_market
         markets = [parse(entry) for entry in entries if isinstance(entry, dict)]
+        if market_ids:
+            wanted = set(market_ids)
+            markets = [m for m in markets if m.venue_market_id in wanted]
         self.health.record_message()
         self.health.connected = True
         return markets[:limit] if limit is not None else markets
