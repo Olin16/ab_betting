@@ -5,7 +5,7 @@ Tracks the agreed plan toward a supervised smoke test and then an unattended pap
 
 | # | Step | Status |
 | --- | --- | --- |
-| 1 | Review venue terms and developer agreement | **Done** (Kalshi); Polymarket outstanding |
+| 1 | Review venue terms and developer agreement | **Done** — see the blocker below |
 | 2 | Watched-pair configuration and targeted refresh | **Done** |
 | 3 | Persistence and safe approval restore | **Done** |
 | 4 | Continuous synchronization; resolve sequence behaviour | **Done** |
@@ -81,10 +81,26 @@ nothing.
 - Malformed WebSocket updates now emit an immediately stale book on both venues, matching
   sequence-gap handling. Previously the stored book stayed eligible until it aged out.
 
+## ⚠ Legal blocker found in the Polymarket Terms
+
+Polymarket prohibits trading by anyone residing, located, incorporated, registered, or
+principally doing business in the **United States** (and ~20 other territories), with the
+Terms stating "THERE ARE NO EXCEPTIONS". Restricted Persons may use only the Content
+Features and "may not access the Technology Features" — which is where the CLOB API this
+project reads lives.
+
+A separate clause bars API access to Polymarket Data by non-retail professional entities
+engaged in **proprietary trading**, absent written agreement.
+
+Neither is an engineering problem. Until the operator's jurisdiction and retail status are
+confirmed, steps 7 and 8 cannot begin **for the Polymarket leg**, and no technical
+workaround is acceptable — VPN or similar circumvention is expressly prohibited and this
+project will not implement one. Kalshi is unaffected. Full detail in `docs/compliance.md`.
+
 ## Human gates
 
-- [ ] **Polymarket Terms of Use** — still unreviewed. The page is JavaScript-rendered and
-      could not be machine-read. Needs a human before any live access.
+- [ ] **Confirm operator jurisdiction and retail status** against the Polymarket Terms
+      (see the blocker above). This gates the entire Polymarket leg.
 - [ ] At least one real pair approved by a human who read both rulebooks end to end.
 - [ ] Kalshi membership in good standing; Rulebook permits the intended automated activity.
 - [ ] Kalshi authentication verified against a real key (api-assumptions A5), and whether

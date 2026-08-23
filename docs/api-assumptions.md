@@ -162,7 +162,11 @@ configurable haircut, never assumed to be 1.0000 silently.
 The Kalshi Developer Agreement was read in full on 2026-08-22. It materially constrains
 storage and sharing: API use is limited to facilitating your own trading, and data may not
 be shared with third parties without written authorization. See **docs/compliance.md**.
-Polymarket's Terms of Use is still unreviewed (JavaScript-rendered; needs a human).
+Polymarket's Terms of Use was read in full on 2026-08-23. It prohibits trading by US
+persons and other listed territories with no exceptions, bars Restricted Persons from
+accessing the Technology Features (the CLOB API) at all, and bars API access to its Data by
+non-retail proprietary trading entities absent written agreement. **This may make the
+Polymarket leg unusable regardless of implementation.**
 
 ### C0b. Approval fingerprint — decision
 An approval is verified against a **versioned settlement fingerprint**

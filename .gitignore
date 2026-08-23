@@ -40,6 +40,11 @@ data/
 logs/
 *.log
 
+# ---- Operator-supplied reference documents ----
+# Venue terms are read and summarized into docs/compliance.md; the source PDFs are not
+# ours to redistribute.
+*.pdf
+
 # ---- OS / editor ----
 .DS_Store
 .idea/
