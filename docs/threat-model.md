@@ -109,6 +109,23 @@ on a clean checkout; the container runs as a non-root user (uid 10001).
 runs. **Before handling real credentials**, add `uv.lock` with hashes, enable Dependabot,
 and add `pip-audit` to CI.
 
+## T7b — Unauthorized approval via the dashboard
+
+*Threat:* someone reachable on the network approves a market pair, turning an unverified
+research candidate into something the system labels a confirmed arbitrage.
+
+Controls: `Settings.validate_exposure()` refuses at startup to serve a non-loopback bind
+without `EVENT_ARB_API_AUTH_TOKEN`; state-changing routes (`/api/scan`,
+`/api/pairs/{id}/approve`) require a bearer token compared with
+`secrets.compare_digest`; Compose publishes the dashboard and database on `127.0.0.1`
+only. A container binding `0.0.0.0` behind a loopback-restricted port mapping must set
+`EVENT_ARB_API_BIND_IS_EXTERNALLY_RESTRICTED` explicitly — it is an acknowledgement of
+responsibility, not an authentication bypass.
+
+*Residual risk:* approval remains the highest-value action in the system and a single
+shared token is coarse. Put an authenticating proxy with per-user identity in front
+before more than one operator has access.
+
 ## T8 — Local privilege / host compromise
 
 *Threat:* an attacker with local access reads `.env` or the key file.
@@ -119,8 +136,8 @@ production infrastructure.
 
 ## Explicitly out of scope
 
-- Dashboard authentication. It binds to `127.0.0.1` by default and has **no auth**. Do not
-  expose it to a network without putting an authenticating proxy in front.
-- Multi-tenant isolation, rate limiting of the dashboard, and CSRF protection on the JSON
-  API (the approval endpoint is state-changing and unauthenticated).
+- Multi-tenant isolation, dashboard rate limiting, and CSRF protection on the JSON API.
+- Read authentication on dashboard pages. Only state-changing routes are guarded; page
+  views are readable by anyone who can reach the port, which is why non-loopback binds
+  require a token and Compose publishes on loopback only.
 - Venue-side compromise and settlement disputes.

@@ -54,6 +54,7 @@ class TrialStats:
     refreshes: int = 0
     snapshots_pruned: int = 0
     errors: int = 0
+    health_alerts: int = 0
     last_scan_at: datetime | None = None
     last_error: str | None = None
 
@@ -68,6 +69,7 @@ class TrialStats:
             "refreshes": self.refreshes,
             "snapshots_pruned": self.snapshots_pruned,
             "errors": self.errors,
+            "health_alerts": self.health_alerts,
             "last_scan_at": self.last_scan_at.isoformat() if self.last_scan_at else None,
             "last_error": self.last_error,
         }
@@ -219,9 +221,30 @@ class TrialRunner:
             pnl=str(trade.realized_pnl_if_hedged),
         )
 
+    def _check_health(self) -> list[str]:
+        """Report adapters that have gone quiet.
+
+        An unattended trial that silently stops receiving data still produces a tidy
+        report — of nothing. Degraded ingestion has to be loud, or the absence of
+        opportunities gets mistaken for an absence of opportunity.
+        """
+        report = self._scanner.health()
+        return [
+            str(entry.get("venue")) for entry in report.adapters if not entry.get("fresh", False)
+        ]
+
     async def _maintenance_loop(self) -> None:
         while await self._sleep(MAINTENANCE_INTERVAL_SECONDS):
             try:
+                unhealthy = self._check_health()
+                if unhealthy:
+                    self.stats.health_alerts += 1
+                    log.error(
+                        "trial.adapter_unhealthy",
+                        venues=unhealthy,
+                        note="ingestion is degraded; detected opportunity counts are "
+                        "not meaningful while this persists",
+                    )
                 self.stats.snapshots_pruned += await self._scanner.prune_snapshots()
                 # Re-fetch metadata so a mid-trial rules change is noticed promptly
                 # rather than only at the next restart.

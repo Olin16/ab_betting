@@ -8,7 +8,9 @@ services:
       # non-local deployment; never bake one into a tracked file.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only}
     ports:
-      - "5432:5432"
+      # Loopback only. Publishing 5432 on every interface exposes the database to the
+      # local network; remove this mapping entirely unless you need a host-side client.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +26,12 @@ services:
         condition: service_healthy
     environment:
       EVENT_ARB_DATABASE_URL: postgresql+psycopg://event_arb:${POSTGRES_PASSWORD:-local_dev_only}@db:5432/event_arb
+      # Binds inside the container only; the published port above is loopback-restricted.
       EVENT_ARB_API_HOST: 0.0.0.0
+      EVENT_ARB_API_AUTH_TOKEN: ${EVENT_ARB_API_AUTH_TOKEN:-}
+      # Binding 0.0.0.0 inside the container is safe *because* the published port above
+      # is restricted to 127.0.0.1. If you change that mapping, set an auth token.
+      EVENT_ARB_API_BIND_IS_EXTERNALLY_RESTRICTED: "true"
       EVENT_ARB_API_PORT: 8000
       # Fixture data by default: no credentials, no venue traffic.
       EVENT_ARB_DATA_SOURCE: fixture
@@ -33,7 +40,10 @@ services:
       # Live trading is not implemented; this stays false.
       EVENT_ARB_TRADING_ENABLED: "false"
     ports:
-      - "8000:8000"
+      # Loopback only. The dashboard has no read authentication and its approval endpoint
+      # changes state, so it must not be reachable from the network. To expose it, set
+      # EVENT_ARB_API_AUTH_TOKEN and put an authenticating proxy in front.
+      - "127.0.0.1:8000:8000"
     command: >-
       sh -c "alembic upgrade head && event-arb serve"
 

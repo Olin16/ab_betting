@@ -10,12 +10,13 @@ candidate* must never be mistaken for a verified arbitrage because of UI ambigui
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import secrets
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -35,9 +36,31 @@ log = get_logger(__name__)
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+def _require_auth(config: Settings) -> Callable[[Request], None]:
+    """Guard state-changing endpoints when a token is configured.
+
+    Comparison is constant-time: a token check that leaks timing is a token check that
+    can be brute-forced.
+    """
+
+    def dependency(request: Request) -> None:
+        expected = config.api_auth_token.get_secret_value()
+        if not expected:
+            # Permitted only on loopback; validate_exposure() enforces that at startup.
+            return
+        header = request.headers.get("authorization", "")
+        supplied = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+        if not supplied or not secrets.compare_digest(supplied, expected):
+            raise HTTPException(status_code=401, detail="missing or invalid bearer token")
+
+    return dependency
+
+
 def create_app(settings: Settings | None = None, scanner: Scanner | None = None) -> FastAPI:
     config = settings or get_settings()
     configure_logging(config.log_level, config.log_format)
+    # Fail closed before a socket is opened, not after.
+    config.validate_exposure()
     database = None if scanner is not None else Database(config.database_url)
     runtime = scanner or Scanner(config, database=database)
 
@@ -214,7 +237,9 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
 
     # ------------------------------------------------------------------ JSON API
 
-    @app.post("/api/scan", response_class=JSONResponse)
+    auth = Depends(_require_auth(config))
+
+    @app.post("/api/scan", response_class=JSONResponse, dependencies=[auth])
     async def api_scan() -> dict[str, Any]:
         books = await runtime.refresh_books()
         await runtime.record_books(books)
@@ -235,7 +260,7 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             "opportunities": [o.model_dump(mode="json") for o in result.opportunities],
         }
 
-    @app.post("/api/pairs/{pair_id}/approve", response_class=JSONResponse)
+    @app.post("/api/pairs/{pair_id}/approve", response_class=JSONResponse, dependencies=[auth])
     async def api_approve(pair_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Approve a pair. Requires an identified reviewer."""
         approved_by = str(payload.get("approved_by", "")).strip()

@@ -10,7 +10,7 @@ Tracks the agreed plan toward a supervised smoke test and then an unattended pap
 | 3 | Persistence and safe approval restore | **Done** |
 | 4 | Continuous synchronization; resolve sequence behaviour | **Done** |
 | 5 | Continuous scanning and automated paper execution | **Done** |
-| 6 | Retention and operational hardening | **Partial** — retention done; hardening outstanding |
+| 6 | Retention and operational hardening | **Done** |
 | 7 | Supervised live read-only smoke test | Blocked on 4–6 |
 | 8 | Unattended paper trial | Blocked on 4–6 |
 
@@ -60,12 +60,16 @@ labeled arbitrage.
 
 ## What remains before a trial
 
-**Step 6 — operational hardening.** Docker still binds `0.0.0.0` and publishes Postgres
-with a default password; the dashboard has no authentication and its approval endpoint is
-state-changing and unauthenticated. Health alerting is not wired.
-
 **Pagination** is still unimplemented, which is acceptable while trials name their markets
 explicitly but blocks any move to venue-wide discovery.
+
+**Step 6 — hardening.** Compose publishes both the dashboard and Postgres on `127.0.0.1`
+only. Binding the API to a non-loopback interface without `EVENT_ARB_API_AUTH_TOKEN` now
+fails at startup rather than quietly exposing the approval endpoint, and state-changing
+routes require a bearer token compared in constant time. Read-only health and metrics stay
+open for monitoring. Degraded ingestion raises a loud `trial.adapter_unhealthy` alert,
+because an unattended trial that stops receiving data otherwise produces a tidy report of
+nothing.
 
 ## Review fixes applied
 

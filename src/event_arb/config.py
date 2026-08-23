@@ -183,6 +183,14 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/event_arb.db"
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    #: Bearer token required for state-changing dashboard endpoints. Empty is permitted
+    #: only while bound to loopback; see :meth:`validate_exposure`.
+    api_auth_token: SecretStr = SecretStr("")
+    #: Set only when exposure is restricted outside the process — a container published
+    #: on a loopback-only port mapping, or an authenticating reverse proxy. It asserts
+    #: the operator has taken responsibility for reachability; it is not a way to skip
+    #: authentication on a genuinely reachable interface.
+    api_bind_is_externally_restricted: bool = False
 
     data_source: DataSource = DataSource.FIXTURE
     fixture_dir: Path = Path("tests/fixtures")
@@ -199,6 +207,28 @@ class Settings(BaseSettings):
     trading_enabled: bool = False
     #: Second factor required alongside ``trading_enabled``; still insufficient here.
     trading_confirmation_phrase: SecretStr = SecretStr("")
+
+    @property
+    def api_is_loopback_only(self) -> bool:
+        return self.api_host in {"127.0.0.1", "localhost", "::1"}
+
+    def validate_exposure(self) -> None:
+        """Refuse to serve an unauthenticated dashboard on a reachable interface.
+
+        The dashboard has no read authentication and its approval endpoint changes state:
+        approving a pair is what lets an opportunity be labeled a confirmed arbitrage. On
+        loopback that is acceptable for a single operator. Bound to anything else without
+        a token, it would let anyone on the network approve pairs, so startup fails
+        closed rather than quietly exposing it.
+        """
+        if self.api_is_loopback_only or self.api_bind_is_externally_restricted:
+            return
+        if not self.api_auth_token.get_secret_value():
+            raise ValueError(
+                f"refusing to serve on {self.api_host} without EVENT_ARB_API_AUTH_TOKEN: "
+                "the dashboard exposes a state-changing approval endpoint. Bind to "
+                "127.0.0.1, or set a token and put an authenticating proxy in front."
+            )
 
     @property
     def live_trading_possible(self) -> bool:
