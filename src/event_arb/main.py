@@ -198,6 +198,67 @@ async def _cmd_pairs(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_trial(settings: Settings, args: argparse.Namespace) -> int:
+    """Run the autonomous paper trial until interrupted."""
+    _banner(settings)
+
+    from event_arb.alerts import AlertDispatcher
+    from event_arb.persistence.database import Database
+    from event_arb.runtime import TrialRunner
+
+    database = Database(settings.database_url)
+    await database.create_all()
+    scanner = Scanner(settings, database=database)
+
+    await scanner.discover()
+    report = await scanner.restore()
+    if report.suspended:
+        print(f"\n  {len(report.suspended)} approval(s) suspended on restore:")
+        for pair, reason in report.suspended:
+            print(f"    {pair.id[:12]}: {reason}")
+    scanner.seed_watched_pairs()
+    if not settings.trial.watched_pairs:
+        scanner.generate_pairs(min_score=Decimal("0.4"))
+    await scanner.persist_markets()
+    await scanner.persist_pairs()
+
+    approved = [p for p in scanner.state.pairs.values() if p.is_tradable_pair]
+    print(f"\n  watched pairs : {len(scanner.state.pairs)}")
+    print(f"  approved      : {len(approved)}")
+    if not approved:
+        print("  NOTE: no approved pairs. Only research candidates will be detected,")
+        print("        and none will be labeled arbitrage.")
+
+    runner = TrialRunner(
+        scanner,
+        settings,
+        alerts=AlertDispatcher(settings.alerts),
+        use_websockets=settings.data_source is DataSource.LIVE and not args.rest_only,
+    )
+    await runner.start()
+    print(f"\n  trial running; scanning every {settings.trial.scan_interval_seconds}s")
+    print("  press Ctrl-C to stop\n")
+
+    try:
+        if args.duration:
+            await asyncio.sleep(args.duration)
+        else:
+            await asyncio.Event().wait()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        await runner.stop()
+        print("\n--- Trial summary ---")
+        for key, value in runner.stats.as_dict().items():
+            print(f"  {key}: {value}")
+        report_daily = scanner.portfolio.daily_report()
+        print("\n--- Daily paper report ---")
+        for key, value in report_daily.as_dict().items():
+            print(f"  {key}: {value}")
+        await scanner.close()
+    return 0
+
+
 async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
     _banner(settings)
     print("\nConfiguration:")
@@ -252,6 +313,20 @@ def build_parser() -> argparse.ArgumentParser:
     paper = subparsers.add_parser("paper", help="scan, then simulate two-leg execution")
     pairs = subparsers.add_parser("pairs", help="list candidate pairs and rule differences")
     subparsers.add_parser("doctor", help="print configuration and verify the safety posture")
+    trial = subparsers.add_parser(
+        "trial", help="run the autonomous paper trial (ingest, scan, paper-execute)"
+    )
+    trial.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="stop after this many seconds (default: run until interrupted)",
+    )
+    trial.add_argument(
+        "--rest-only",
+        action="store_true",
+        help="poll REST only; do not open WebSocket connections",
+    )
     serve = subparsers.add_parser("serve", help="run the dashboard")
 
     for sub in (scan, paper):
@@ -299,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         "paper": _cmd_paper,
         "pairs": _cmd_pairs,
         "doctor": _cmd_doctor,
+        "trial": _cmd_trial,
     }
     return asyncio.run(handlers[args.command](settings, args))
 

@@ -19,12 +19,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from event_arb.config import Settings, get_settings
+from event_arb.alerts import AlertDispatcher
+from event_arb.config import DataSource, Settings, get_settings
 from event_arb.domain.enums import Venue
 from event_arb.matching.rules_diff import compare_rules
 from event_arb.observability import metrics
 from event_arb.observability.logging import configure_logging, get_logger
 from event_arb.persistence.database import Database
+from event_arb.runtime import TrialRunner
 from event_arb.scanner import Scanner
 
 __all__ = ["create_app"]
@@ -63,7 +65,22 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         await runtime.persist_markets()
         await runtime.persist_pairs()
         await runtime.refresh_books()
+
+        trial: TrialRunner | None = None
+        if config.trial.enabled:
+            trial = TrialRunner(
+                runtime,
+                config,
+                alerts=AlertDispatcher(config.alerts),
+                use_websockets=config.data_source is DataSource.LIVE,
+            )
+            app.state.trial = trial
+            await trial.start()
+
         yield
+
+        if trial is not None:
+            await trial.stop()
         await runtime.close()
 
     app = FastAPI(
@@ -76,6 +93,7 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         version="0.1.0",
     )
     app.state.scanner = runtime
+    app.state.trial = None
     app.state.settings = config
 
     # ------------------------------------------------------------------ operational
@@ -235,6 +253,14 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return pair.model_dump(mode="json")
+
+    @app.get("/api/trial", response_class=JSONResponse)
+    async def trial_status() -> dict[str, Any]:
+        """Live trial counters: scans, detections, paper trades, errors."""
+        active: TrialRunner | None = app.state.trial
+        if active is None:
+            return {"running": False, "reason": "trial.enabled is false"}
+        return active.status()
 
     @app.get("/api/trading-status", response_class=JSONResponse)
     async def trading_status() -> dict[str, Any]:

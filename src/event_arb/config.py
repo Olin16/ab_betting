@@ -125,6 +125,9 @@ class WatchedPair(BaseModel):
 class TrialSettings(BaseModel):
     """Configuration for a supervised or unattended paper trial."""
 
+    #: Run the autonomous ingest/scan/paper-execute loops. Off by default: a trial should
+    #: be started deliberately, not by merely launching the dashboard.
+    enabled: bool = False
     #: When non-empty, discovery and refresh are restricted to these pairs only.
     watched_pairs: list[WatchedPair] = Field(default_factory=list)
     #: Seconds between REST refreshes of watched books.

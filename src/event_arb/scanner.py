@@ -7,6 +7,7 @@ so a caller can scan once, scan on a timer, or scan on demand from an HTTP reque
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -109,6 +110,13 @@ class Scanner:
             settings.paper.starting_usd_balance, settings.paper.starting_usdc_balance
         )
         self.last_restore: RestoreReport | None = None
+        #: True while a continuous feed is running; enables latency-aware paper fills.
+        self.streaming = False
+        #: Serializes database writes. The trial's refresh, scan, execute and maintenance
+        #: loops all persist concurrently; without this their sessions interleave on the
+        #: same rows. Every acquisition wraps exactly one session block and never nests,
+        #: so it cannot deadlock.
+        self._db_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ discovery
 
@@ -334,7 +342,7 @@ class Scanner:
         if self.database is None:
             return result
 
-        async with self.database.session() as session:
+        async with self._db_lock, self.database.session() as session:
             opportunities = OpportunityRepository(session)
             for opportunity in result.opportunities:
                 await opportunities.record(opportunity)
@@ -354,23 +362,40 @@ class Scanner:
         """Persist book snapshots for replay and audit, within the retention window."""
         if self.database is None or not books:
             return
-        async with self.database.session() as session:
+        async with self._db_lock, self.database.session() as session:
             repository = OrderBookSnapshotRepository(session)
             for book in books:
                 await repository.record(book)
 
     # --------------------------------------------------------------- paper trading
 
-    async def paper_trade(self, opportunity: Opportunity) -> PaperTrade:
-        """Simulate execution of one opportunity against current books."""
+    async def paper_trade(
+        self, opportunity: Opportunity, simulate_latency: bool | None = None
+    ) -> PaperTrade:
+        """Simulate execution of one opportunity against current books.
 
-        async def provider(venue: Venue, market_id: str, _latency_ms: int) -> OrderBook | None:
-            # A real implementation would advance simulated time by the latency; with
-            # snapshot fixtures the latest stored book is the best available proxy.
+        When ``simulate_latency`` is enabled the provider actually waits the configured
+        network latency before reading the book. That matters: with a live feed the store
+        keeps updating while we wait, so leg 2 genuinely arrives into a book that has
+        moved. Reading the detection-time snapshot instead would make every fill look
+        clean and would produce trial evidence that understates fill failure — the exact
+        thing the trial exists to measure.
+
+        It defaults to on whenever a continuous feed is running, and off for one-shot
+        fixture runs where waiting would only slow the demo down.
+        """
+        wait = self.streaming if simulate_latency is None else simulate_latency
+
+        async def provider(venue: Venue, market_id: str, latency_ms: int) -> OrderBook | None:
+            if wait and latency_ms > 0:
+                await asyncio.sleep(latency_ms / 1000.0)
             return self.store.get(venue, market_id)
 
         executor = PaperExecutor(
-            self.settings.paper, provider, kalshi_direct_member=self.settings.kalshi.direct_member
+            self.settings.paper,
+            provider,
+            kalshi_direct_member=self.settings.kalshi.direct_member,
+            freshness=self.store.policy,
         )
         kalshi = self.state.markets[(Venue.KALSHI, opportunity.kalshi_leg.market_id)]
         polymarket = self.state.markets[(Venue.POLYMARKET, opportunity.polymarket_leg.market_id)]
@@ -379,7 +404,7 @@ class Scanner:
         self.state.paper_trades.append(trade)
 
         if self.database is not None:
-            async with self.database.session() as session:
+            async with self._db_lock, self.database.session() as session:
                 await PaperTradeRepository(session).record(trade)
             await self.audit(
                 "system",
@@ -401,14 +426,14 @@ class Scanner:
         """Write current market metadata, including rules hashes."""
         if self.database is None:
             return
-        async with self.database.session() as session:
+        async with self._db_lock, self.database.session() as session:
             await VenueMarketRepository(session).upsert_many(self.state.markets.values())
 
     async def persist_pairs(self) -> None:
         """Write pairs with their approval metadata and rule hashes."""
         if self.database is None:
             return
-        async with self.database.session() as session:
+        async with self._db_lock, self.database.session() as session:
             await MarketPairRepository(session).save_many(self.state.pairs.values())
 
     async def audit(
@@ -416,7 +441,7 @@ class Scanner:
     ) -> None:
         if self.database is None:
             return
-        async with self.database.session() as session:
+        async with self._db_lock, self.database.session() as session:
             await AuditLogRepository(session).append(actor, action, subject, detail)
 
     async def restore(self) -> RestoreReport:
@@ -429,7 +454,7 @@ class Scanner:
         if self.database is None:
             return RestoreReport()
 
-        async with self.database.session() as session:
+        async with self._db_lock, self.database.session() as session:
             stored_markets = await VenueMarketRepository(session).load_all()
             stored_pairs = await MarketPairRepository(session).load_all()
 
@@ -456,7 +481,7 @@ class Scanner:
         if self.database is None:
             return 0
         window = timedelta(hours=self.settings.trial.snapshot_retention_hours)
-        async with self.database.session() as session:
+        async with self._db_lock, self.database.session() as session:
             removed = await OrderBookSnapshotRepository(session).prune(window)
         if removed:
             log.info("scanner.snapshots_pruned", removed=removed)

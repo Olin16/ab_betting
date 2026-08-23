@@ -24,6 +24,7 @@ from event_arb.domain.models import (
     OrderBookSide,
     VenueMarket,
 )
+from event_arb.orderbooks.freshness import FreshnessPolicy
 from event_arb.paper.executor import PaperExecutor, settle
 from event_arb.paper.fills import simulate_buy
 from event_arb.paper.portfolio import PaperPortfolio
@@ -125,7 +126,13 @@ def executor_with(
     async def provider(venue: Venue, market_id: str, latency_ms: int) -> OrderBook | None:
         return books.get((venue, market_id))
 
-    return PaperExecutor(settings or PaperSettings(adverse_fill_pct=Decimal("0")), provider)
+    # Books here are module-level constants, so they age as the suite runs. These tests
+    # are about fill behaviour; the age-specific cases below use explicitly old books.
+    return PaperExecutor(
+        settings or PaperSettings(adverse_fill_pct=Decimal("0")),
+        provider,
+        freshness=FreshnessPolicy(max_age_ms=60_000),
+    )
 
 
 FULL_KALSHI = make_book(Venue.KALSHI, "K1", levels(("0.55", "300")), levels(("0.47", "300")))
