@@ -5,13 +5,21 @@ event contracts on **Kalshi** and **Polymarket**.
 
 > **Venue identity matters:** the implemented Polymarket adapter targets the international
 > CLOB, which US operators may not use. The intended US deployment target is the separate
-> QCX-operated **Polymarket US** API. Its adapter is not implemented yet, and live mode
-> fails closed rather than falling back to Global. See
-> [`docs/venue-roadmap.md`](docs/venue-roadmap.md).
+> QCX-operated **Polymarket US** API, which **is** implemented for public read-only
+> REST. See the venue status note below.
 
 > **This build collects market data, detects opportunities, and paper-trades them.
 > It cannot place a real order.** Live execution (Phase 7) is not implemented: the only
 > execution adapter that exists refuses every submission unconditionally.
+
+> **Venue status.** Polymarket **Global** is legacy and is never a US fallback.
+> Polymarket **US** (QCX LLC) is implemented for **public REST, read-only, credential-free**.
+> Its WebSocket is on the authenticated API and is **not** implemented. Both venues serve
+> market data over unauthenticated REST but authenticate their WebSocket handshake even for
+> public channels, so REST polling is the credential-free ingestion path.
+> No real order submission exists. Research candidates are not arbitrage. Public endpoint
+> availability does not resolve terms, KYC, eligibility, retention or production-approval
+> questions.
 
 ## What it does
 
@@ -21,8 +29,9 @@ event contracts on **Kalshi** and **Polymarket**.
 - Walks real order-book depth to compute executable quantity and volume-weighted prices.
   Midpoints are never used for profit calculations.
 - Models Kalshi's ceil-to-centicent fee rounding and Polymarket's category-based taker fee.
-- Treats USD and USDC as distinct assets with an explicit conversion/depeg haircut for
-  legacy Global fixtures; Polymarket US settles in USD and requires a separate adapter.
+- Treats USD and USDC as distinct assets. The haircut applies to Polymarket **Global**
+  only; Polymarket US settles in USD, and settlement reporting derives the asset from
+  the trade's legs rather than assuming either product.
 - Suspends an approved pair automatically if either venue's rules text changes.
 - Simulates two-leg execution with latency, partial fills, and unhedged exposure.
 
@@ -78,7 +87,7 @@ docker compose up          # PostgreSQL + the dashboard
 Optional read-only live tests are marked and **deselected by default**:
 
 ```bash
-.venv/bin/pytest -m live               # requires credentials; still places no orders
+.venv/bin/pytest -m live               # opt-in schema checks; read-only, places no orders
 ```
 
 ## Documentation

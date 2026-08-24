@@ -1,5 +1,14 @@
 # Architecture
 
+> **Venue status.** Polymarket **Global** is legacy and is never a US fallback.
+> Polymarket **US** (QCX LLC) is implemented for **public REST, read-only, credential-free**.
+> Its WebSocket is on the authenticated API and is **not** implemented. Both venues serve
+> market data over unauthenticated REST but authenticate their WebSocket handshake even for
+> public channels. No real order submission exists. Research candidates are not arbitrage.
+> Public endpoint availability does not resolve terms, KYC, eligibility, retention or
+> production-approval questions.
+
+
 > Current Polymarket source code and fixtures model the international CLOB. Polymarket US
 > is a separate target requiring a new adapter and USD fee/settlement model; live mode
 > fails closed until it exists. See `docs/venue-roadmap.md`.
@@ -35,7 +44,9 @@ Live execution is **absent** from this diagram because it is absent from the bui
 | --- | --- | --- |
 | Money | `domain/money.py` | Decimal grids; rejects `float` outright |
 | Domain | `domain/models.py`, `enums.py` | Frozen value objects, no I/O |
-| Venues | `venues/` | Protocol + Kalshi/Polymarket/Fixture adapters, mappers, fees, auth |
+| Venues | `venues/` | Protocol + Kalshi, Polymarket Global, Polymarket US and Fixture adapters |
+| Fees | `fees.py` | Policy dispatch; never infers rounding from `Venue` |
+| Candidates | `candidates.py` | Bounded research; never approves or trades |
 | Books | `orderbooks/` | Latest-book store, freshness policy, stream synchronization |
 | Matching | `matching/` | Normalization, candidate scoring, rules diff, approval lifecycle |
 | Opportunities | `opportunities/` | Depth walking, profit calculation, risk flags, scan cycle |

@@ -1,5 +1,14 @@
 # Market Matching
 
+> **Venue status.** Polymarket **Global** is legacy and is never a US fallback.
+> Polymarket **US** (QCX LLC) is implemented for **public REST, read-only, credential-free**.
+> Its WebSocket is on the authenticated API and is **not** implemented. Both venues serve
+> market data over unauthenticated REST but authenticate their WebSocket handshake even for
+> public channels. No real order submission exists. Research candidates are not arbitrage.
+> Public endpoint availability does not resolve terms, KYC, eligibility, retention or
+> production-approval questions.
+
+
 ## The core claim this system refuses to make automatically
 
 Two markets with near-identical titles are **not** necessarily the same contract. Title
@@ -23,6 +32,23 @@ leveraged directional bet on a data discrepancy.
 The scanner surfaces this pair with an attractive-looking $12.63 net profit — and labels
 it a **research candidate**, flags `rules_differences_present`, and refuses approval
 without explicit acknowledgement of the material differences.
+
+## Approval readiness is not similarity
+
+A score says two markets *look* alike. **Readiness** says whether we hold enough
+information to claim they *settle* alike, and it is assessed separately
+(`matching/readiness.py`). A pair is unapprovable when either leg lacks authoritative
+rules or a **named settlement source**, product or outcome identity is unresolved, a close
+time is missing, a required settlement deadline is unknown, or a difference could settle
+the legs to opposite outcomes.
+
+Two empty settlement sources are **not** agreement. `compare_rules` reports no difference
+when both are empty, because empty equals empty — so readiness blocks separately, and a
+reviewer must record a source obtained outside the API **per leg**.
+
+There is **no generic acknowledgement override**. A contradictory pair cannot be
+acknowledged into equivalence; genuine exceptions go through `record_expert_review`, which
+never yields a confirmed label.
 
 ## Two-stage pipeline
 

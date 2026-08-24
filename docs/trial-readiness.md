@@ -1,5 +1,15 @@
 # Trial Readiness — Status
 
+> **Venue status.** Polymarket **Global** is legacy and is never a US fallback.
+> Polymarket **US** (QCX LLC) is implemented for **public REST, read-only, credential-free**.
+> Its WebSocket is on the authenticated API and is **not** implemented. Both venues serve
+> market data over unauthenticated REST but authenticate their WebSocket handshake even for
+> public channels, so REST polling is the credential-free ingestion path.
+> No real order submission exists. Research candidates are not arbitrage. Public endpoint
+> availability does not resolve terms, KYC, eligibility, retention or production-approval
+> questions.
+
+
 Tracks the agreed plan toward a supervised smoke test and then an unattended paper trial.
 **Live trading remains out of scope and structurally impossible.**
 
@@ -88,7 +98,7 @@ that product's CLOB technology, so the existing live adapter is not a lawful US 
 target. Polymarket US is a separate QCX-operated, CFTC-designated product with a documented
 public API, authenticated market WebSocket, official SDKs, and USD settlement.
 
-The scanner is therefore pivoting to Polymarket US. Its adapter is not implemented yet.
+The scanner has pivoted to Polymarket US. Its public read-only REST adapter is implemented and credential-free; its WebSocket is authenticated and is not.
 Configuration distinguishes US from Global and fails closed: selecting US cannot silently
 construct the Global client, while selecting Global requires an explicit eligibility and
 permission acknowledgement.

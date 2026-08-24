@@ -1,5 +1,14 @@
 # Venue Roadmap
 
+> **Venue status.** Polymarket **Global** is legacy and is never a US fallback.
+> Polymarket **US** (QCX LLC) is implemented for **public REST, read-only, credential-free**.
+> Its WebSocket is on the authenticated API and is **not** implemented. Both venues serve
+> market data over unauthenticated REST but authenticate their WebSocket handshake even for
+> public channels. No real order submission exists. Research candidates are not arbitrage.
+> Public endpoint availability does not resolve terms, KYC, eligibility, retention or
+> production-approval questions.
+
+
 ## Current target
 
 `event-arb` remains a two-venue, read-only and paper-trading system. The intended pair is

@@ -1,5 +1,14 @@
 # Risk Model
 
+> **Venue status.** Polymarket **Global** is legacy and is never a US fallback.
+> Polymarket **US** (QCX LLC) is implemented for **public REST, read-only, credential-free**.
+> Its WebSocket is on the authenticated API and is **not** implemented. Both venues serve
+> market data over unauthenticated REST but authenticate their WebSocket handshake even for
+> public channels. No real order submission exists. Research candidates are not arbitrage.
+> Public endpoint availability does not resolve terms, KYC, eligibility, retention or
+> production-approval questions.
+
+
 > The implemented Polymarket model describes the legacy international CLOB. The intended
 > US target is Polymarket US, which settles in USD and requires a separate adapter. Do not
 > apply Global USDC, fee, sequence, or geoblock assumptions to the US product. See
@@ -57,7 +66,9 @@ hashes at approval and auto-suspends the pair if either text changes.
 
 ## 3. Currency and settlement-asset risk
 
-Kalshi settles in **USD**. Polymarket Global settles in **USDC** on Polygon. These are different
+Kalshi settles in **USD**, as does **Polymarket US** — that pairing carries no cross-asset
+exposure and receives no haircut. Polymarket **Global** settles in **USDC** on Polygon.
+Those are different
 assets:
 
 - **Depeg risk.** USDC has traded below $1.00 before and can again.
