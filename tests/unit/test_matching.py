@@ -496,3 +496,45 @@ def test_close_time_change_suspends_an_approved_pair() -> None:
     moved = kalshi.model_copy(update={"close_time": datetime(2026, 9, 20, 18, 0, tzinfo=UTC)})
     assert check_for_rules_change(approved, moved, polymarket).changed is True
     assert enforce_rules_integrity(approved, moved, polymarket).is_tradable_pair is False
+
+
+# --------------------------------------------- postponement equivalence classes
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "If the meeting is postponed beyond 2026-09-30 the market resolves to No.",
+        "If the meeting is postponed beyond September 30, 2026, this market will settle to No.",
+        "Should the event be postponed, the contract shall settle to No.",
+    ],
+)
+def test_postponement_settle_and_resolve_wording_are_one_policy(text: str) -> None:
+    """'resolves to No' and 'will settle to No' are the same policy.
+
+    Treating them as different produced a spurious material difference on an otherwise
+    equivalent pair, and spurious warnings are how real ones get ignored.
+    """
+    from event_arb.matching.rules_diff import _POSTPONEMENT_PATTERNS, _first_match
+
+    assert _first_match(text, _POSTPONEMENT_PATTERNS) == "postponement settles No"
+
+
+def test_postponement_void_differs_from_postponement_settles_no() -> None:
+    """Void-and-refund is not a graded loss; this difference is real."""
+    from event_arb.matching.rules_diff import _POSTPONEMENT_PATTERNS, _first_match
+
+    voids = _first_match(
+        "If the event is postponed the market will be voided and refunded.",
+        _POSTPONEMENT_PATTERNS,
+    )
+    settles = _first_match(
+        "If the meeting is postponed the market resolves to No.", _POSTPONEMENT_PATTERNS
+    )
+    assert voids != settles
+
+
+def test_silence_on_postponement_is_not_a_policy() -> None:
+    from event_arb.matching.rules_diff import _POSTPONEMENT_PATTERNS, _first_match
+
+    assert _first_match("Resolves Yes if the team wins.", _POSTPONEMENT_PATTERNS) is None

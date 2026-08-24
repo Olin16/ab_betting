@@ -59,10 +59,24 @@ _REVISION_CLASSES: tuple[tuple[str, str], ...] = (
     ),
 )
 
+#: Postponement policy as **equivalence classes**, not surface wording. "resolves to No"
+#: and "will settle to No" are the same policy; reporting them as different would be a
+#: false positive, and false positives train reviewers to click past real warnings.
 _POSTPONEMENT_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"postponed.{0,60}resolves? to no", "postponement resolves No"),
-    (r"postponed.{0,60}(?:void|cancel|refund)", "postponement voids the market"),
-    (r"if the (?:event|game|meeting) is (?:cancel|postpon)", "postponement addressed"),
+    (
+        r"postpon\w*[^.]{0,90}(?:resolv|settl)\w*\s+to\s+no"
+        r"|(?:resolv|settl)\w*\s+to\s+no[^.]{0,60}postpon",
+        "postponement settles No",
+    ),
+    (
+        r"postpon\w*[^.]{0,90}(?:void|cancel|refund)"
+        r"|(?:void|cancel|refund)\w*[^.]{0,60}postpon",
+        "postponement voids the market",
+    ),
+    (
+        r"if the (?:event|game|meeting|match) is (?:cancel|postpon)|postpon",
+        "postponement addressed, outcome unspecified",
+    ),
 )
 
 _INVALID_PATTERNS: tuple[tuple[str, str], ...] = (

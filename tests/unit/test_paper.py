@@ -500,3 +500,69 @@ async def test_wrong_market_or_venue_book_is_refused() -> None:
     trade = await executor.execute(make_opportunity(), KALSHI_MARKET, POLY_MARKET)
     assert trade.status is PaperTradeStatus.PENDING
     assert trade.leg1 is None
+
+
+# --------------------------------------------------- asset-aware settlement
+
+
+def _legs_with_assets(kalshi: SettlementAsset, polymarket: SettlementAsset) -> Opportunity:
+    opportunity = make_opportunity()
+    return opportunity.model_copy(
+        update={
+            "kalshi_leg": opportunity.kalshi_leg.model_copy(update={"settlement_asset": kalshi}),
+            "polymarket_leg": opportunity.polymarket_leg.model_copy(
+                update={"settlement_asset": polymarket}
+            ),
+        }
+    )
+
+
+async def test_global_settlement_retains_usdc_reporting() -> None:
+    """The legacy path must keep its conversion and depeg reporting."""
+    executor = executor_with(
+        {(Venue.KALSHI, "K1"): FULL_KALSHI, (Venue.POLYMARKET, "P1"): FULL_POLY}
+    )
+    trade = await executor.execute(
+        _legs_with_assets(SettlementAsset.USD, SettlementAsset.USDC),
+        KALSHI_MARKET,
+        POLY_MARKET,
+    )
+    settle(trade, Outcome.YES)
+    result = trade.settlement_result
+    assert result is not None
+    assert result["polymarket_settlement_asset"] == "USDC"
+    assert result["settlement_assets_differ"] is True
+    assert "usdc_denominated_payout" in result
+    assert "depeg" in str(result["settlement_asset_note"])
+
+
+async def test_us_settlement_reports_usd_and_omits_the_usdc_note() -> None:
+    executor = executor_with(
+        {(Venue.KALSHI, "K1"): FULL_KALSHI, (Venue.POLYMARKET, "P1"): FULL_POLY}
+    )
+    trade = await executor.execute(
+        _legs_with_assets(SettlementAsset.USD, SettlementAsset.USD),
+        KALSHI_MARKET,
+        POLY_MARKET,
+    )
+    settle(trade, Outcome.YES)
+    result = trade.settlement_result
+    assert result is not None
+    assert result["polymarket_settlement_asset"] == "USD"
+    assert result["settlement_assets_differ"] is False
+    assert "usdc_denominated_payout" not in result
+    assert "no cross-asset conversion" in str(result["settlement_asset_note"])
+
+
+async def test_settlement_assets_are_read_from_the_legs_not_assumed() -> None:
+    """Hardcoding either product misreports the other."""
+    executor = executor_with(
+        {(Venue.KALSHI, "K1"): FULL_KALSHI, (Venue.POLYMARKET, "P1"): FULL_POLY}
+    )
+    for asset in (SettlementAsset.USD, SettlementAsset.USDC):
+        trade = await executor.execute(
+            _legs_with_assets(SettlementAsset.USD, asset), KALSHI_MARKET, POLY_MARKET
+        )
+        settle(trade, Outcome.YES)
+        assert trade.settlement_result is not None
+        assert trade.settlement_result["polymarket_settlement_asset"] == asset.value
