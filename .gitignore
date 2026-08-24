@@ -45,6 +45,10 @@ logs/
 # ours to redistribute.
 *.pdf
 
+# ---- Generated analysis artifacts ----
+# graphify-out/ currently holds only a local AST cache, not a retained artifact.
+graphify-out/
+
 # ---- OS / editor ----
 .DS_Store
 .idea/
