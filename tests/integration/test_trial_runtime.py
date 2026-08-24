@@ -201,8 +201,12 @@ async def test_stop_leaves_no_tasks_running(fixture_dir: Path, database: Databas
     assert runner.running is True
     await runner.stop()
 
-    assert runner.running is False
-    assert scanner.streaming is False
+    # Locals, not attributes: mypy carries the narrowing from the assert above across
+    # stop(), which would make these checks unreachable and therefore unchecked.
+    stopped: bool = runner.running
+    streaming: bool = scanner.streaming
+    assert stopped is False
+    assert streaming is False
     leftover = [
         t for t in asyncio.all_tasks() if t.get_name().startswith("trial-") and not t.done()
     ]

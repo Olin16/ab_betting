@@ -9,9 +9,9 @@ can reach a venue even though it configures REST-polling live mode.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -59,9 +59,14 @@ def _build(fixture_dir: Path, *, live_rest: bool) -> tuple[Scanner, list[tuple[V
     adapters: dict[Venue, VenueAdapter] = {}
     for venue in (Venue.KALSHI, Venue.POLYMARKET):
         adapter = FixtureAdapter(venue, fixture_dir, product=VenueProduct.POLYMARKET_US)
-        inner = adapter.fetch_orderbook
+        inner: Callable[[str], Awaitable[OrderBook]] = adapter.fetch_orderbook
 
-        async def counted(market_id: str, *, _v: Venue = venue, _inner: Any = inner) -> OrderBook:
+        async def counted(
+            market_id: str,
+            *,
+            _v: Venue = venue,
+            _inner: Callable[[str], Awaitable[OrderBook]] = inner,
+        ) -> OrderBook:
             calls.append((_v, market_id))
             return await _inner(market_id)
 

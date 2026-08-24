@@ -23,7 +23,9 @@ from event_arb.config import (
 )
 from event_arb.domain.enums import MatchStatus, Venue
 from event_arb.domain.keys import kalshi_key
+from event_arb.domain.models import OrderBook
 from event_arb.scanner import Scanner
+from event_arb.venues.base import VenueAdapter
 from event_arb.venues.fixture import FixtureAdapter
 from tests.conftest import KALSHI_FED, KALSHI_NYC, POLY_FED, POLY_NYC
 
@@ -35,12 +37,14 @@ class CountingAdapter(FixtureAdapter):
         super().__init__(venue, fixture_dir)
         self.requested: list[str] = []
 
-    async def fetch_orderbook(self, market_id: str):  # type: ignore[no-untyped-def]
+    async def fetch_orderbook(self, market_id: str) -> OrderBook:
         self.requested.append(market_id)
         return await super().fetch_orderbook(market_id)
 
 
-def build(fixture_dir: Path, trial: TrialSettings | None = None) -> tuple[Scanner, dict]:
+def build(
+    fixture_dir: Path, trial: TrialSettings | None = None
+) -> tuple[Scanner, dict[Venue, CountingAdapter]]:
     settings = Settings(
         # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
         # clearly separated from the Polymarket US fixtures and tests.
@@ -53,7 +57,8 @@ def build(fixture_dir: Path, trial: TrialSettings | None = None) -> tuple[Scanne
         Venue.KALSHI: CountingAdapter(Venue.KALSHI, fixture_dir),
         Venue.POLYMARKET: CountingAdapter(Venue.POLYMARKET, fixture_dir),
     }
-    return Scanner(settings, adapters=adapters), adapters
+    typed: dict[Venue, VenueAdapter] = dict(adapters)
+    return Scanner(settings, adapters=typed), adapters
 
 
 async def test_refresh_is_scoped_to_configured_watched_pairs(fixture_dir: Path) -> None:
@@ -240,7 +245,8 @@ def build_discovery(fixture_dir: Path, trial: TrialSettings | None = None):  # t
         Venue.KALSHI: DiscoveryCountingAdapter(Venue.KALSHI, fixture_dir),
         Venue.POLYMARKET: DiscoveryCountingAdapter(Venue.POLYMARKET, fixture_dir),
     }
-    return Scanner(settings, adapters=adapters), adapters
+    typed: dict[Venue, VenueAdapter] = dict(adapters)
+    return Scanner(settings, adapters=typed), adapters
 
 
 async def test_discovery_is_scoped_to_watched_markets(fixture_dir: Path) -> None:

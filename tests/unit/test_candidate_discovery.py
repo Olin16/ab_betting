@@ -13,6 +13,7 @@ import pytest
 
 from event_arb.candidates import (
     DiscoveryLimits,
+    RequestPlan,
     build_request_plan,
     research_candidates,
     top_slugs_for_verification,
@@ -70,7 +71,7 @@ class _StubAdapter:
         self.sends_credentials = sends_credentials
 
 
-def make_plan(**overrides: object) -> object:
+def make_plan(**overrides: object) -> RequestPlan:
     kalshi = _StubAdapter(
         str(overrides.get("kalshi_url", "https://kalshi.test/v2")),
         bool(overrides.get("kalshi_auth", False)),
@@ -263,7 +264,9 @@ def test_unready_candidates_are_retained_but_flagged() -> None:
     report = research_candidates([kalshi], [us_market(0)], DiscoveryLimits(min_score=Decimal("0")))
     record = report.records[0]
     assert record.readiness.is_ready is False
-    assert "kalshi_settlement_source_unknown" in record.as_dict()["blockers"]
+    blockers = record.as_dict()["blockers"]
+    assert isinstance(blockers, list | tuple)
+    assert "kalshi_settlement_source_unknown" in blockers
     assert report.ready_for_approval == 0
 
 

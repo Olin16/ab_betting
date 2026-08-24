@@ -10,6 +10,7 @@ from event_arb.domain.keys import kalshi_key
 from event_arb.orderbooks.book import BookStore
 from event_arb.orderbooks.freshness import FreshnessPolicy
 from event_arb.orderbooks.synchronizer import BookSynchronizer
+from event_arb.venues.base import VenueAdapter
 from event_arb.venues.fixture import FixtureAdapter
 from tests.conftest import KALSHI_FED, POLY_FED
 
@@ -39,7 +40,7 @@ async def test_replay_of_polymarket_frames_updates_ask_depth() -> None:
 
 async def test_synchronizer_primes_the_store_from_snapshots() -> None:
     store = BookStore(FreshnessPolicy(max_age_ms=10_000))
-    adapters = {
+    adapters: dict[Venue, VenueAdapter] = {
         Venue.KALSHI: FixtureAdapter(Venue.KALSHI, FIXTURES),
         Venue.POLYMARKET: FixtureAdapter(Venue.POLYMARKET, FIXTURES),
     }
@@ -55,7 +56,7 @@ async def test_synchronizer_primes_the_store_from_snapshots() -> None:
 async def test_synchronizer_marks_books_stale_when_priming_fails() -> None:
     """A market with no fixture must not silently leave a phantom fresh book."""
     store = BookStore(FreshnessPolicy(max_age_ms=10_000))
-    adapters = {Venue.KALSHI: FixtureAdapter(Venue.KALSHI, FIXTURES)}
+    adapters: dict[Venue, VenueAdapter] = {Venue.KALSHI: FixtureAdapter(Venue.KALSHI, FIXTURES)}
     sync = BookSynchronizer(store, adapters)
     await sync.prime({Venue.KALSHI: ["DOES-NOT-EXIST"]})
     assert store.get(kalshi_key("DOES-NOT-EXIST")) is None
@@ -63,11 +64,13 @@ async def test_synchronizer_marks_books_stale_when_priming_fails() -> None:
 
 async def test_health_report_reflects_adapter_activity() -> None:
     store = BookStore()
-    adapters: dict[Venue, FixtureAdapter] = {Venue.KALSHI: FixtureAdapter(Venue.KALSHI, FIXTURES)}
-    sync = BookSynchronizer(store, dict(adapters))
+    adapters: dict[Venue, VenueAdapter] = {Venue.KALSHI: FixtureAdapter(Venue.KALSHI, FIXTURES)}
+    sync = BookSynchronizer(store, adapters)
     await sync.prime({Venue.KALSHI: [KALSHI_FED]})
 
     report = sync.health_report()
     assert report[0]["venue"] == Venue.KALSHI.value
-    assert report[0]["messages_received"] >= 1
+    received = report[0]["messages_received"]
+    assert isinstance(received, int)
+    assert received >= 1
     assert report[0]["fresh"] is True

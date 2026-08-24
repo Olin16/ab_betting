@@ -21,7 +21,7 @@ from event_arb.config import (
     TrialSettings,
     WatchedPair,
 )
-from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.enums import MatchStatus, Venue, VenueProduct
 from event_arb.domain.keys import kalshi_key, polymarket_key
 from event_arb.persistence.database import Database
 from event_arb.persistence.repositories import (
@@ -427,9 +427,17 @@ async def test_a_reviewed_source_lost_in_storage_suspends_on_restart(
 
     # Restore without rediscovery so the blanked stored metadata is what is checked.
     second = Scanner(settings, database=database)
-    second.state.observed_markets.update({kalshi_key(KALSHI_FED), (Venue.POLYMARKET, POLY_FED)})
+    second.state.observed_markets.update(
+        {kalshi_key(KALSHI_FED), polymarket_key(VenueProduct.POLYMARKET_GLOBAL, POLY_FED)}
+    )
     await second.restore()
-    assert second.state.pairs[pair_id].is_tradable_pair is False
+
+    pair = second.state.pairs[pair_id]
+    assert pair.is_tradable_pair is False
+    # Assert the *reason*. With a mistyped observed key this suspended for unobserved
+    # metadata instead, and passed while testing nothing. The settlement source is part of
+    # the fingerprint, so losing it reads as a rules change — which is the correct call.
+    assert "since approval" in (pair.reviewer_notes or "")
 
 
 # --------------------------------------- fee configuration survives a restart

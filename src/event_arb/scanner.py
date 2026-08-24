@@ -160,7 +160,7 @@ class Scanner:
         )
         self.last_restore: RestoreReport | None = None
         #: True while a continuous feed is running; enables latency-aware paper fills.
-        self.streaming = False
+        self.streaming: bool = False
         #: Serializes database writes. The trial's refresh, scan, execute and maintenance
         #: loops all persist concurrently; without this their sessions interleave on the
         #: same rows. Every acquisition wraps exactly one session block and never nests,

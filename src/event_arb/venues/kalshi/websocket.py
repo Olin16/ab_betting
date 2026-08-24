@@ -71,7 +71,7 @@ class KalshiBookState:
         self.yes: dict[Decimal, Decimal] = {}
         self.no: dict[Decimal, Decimal] = {}
         self.last_seq: int | None = None
-        self.needs_resync = True
+        self.needs_resync: bool = True
         self.exchange_timestamp: datetime | None = None
 
     def apply_snapshot(self, msg: dict[str, Any], seq: int | None) -> OrderBook:

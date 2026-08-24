@@ -32,12 +32,21 @@ def load(name: str) -> dict[str, Any]:
     return data
 
 
+def _first_market(name: str) -> dict[str, Any]:
+    """Narrow explicitly: an unchecked index would let a schema change pass as Any."""
+    markets = load(name)["markets"]
+    assert isinstance(markets, list) and markets, f"{name} has no markets"
+    first = markets[0]
+    assert isinstance(first, dict)
+    return first
+
+
 def kalshi_market() -> dict[str, Any]:
-    return load("kalshi_markets.json")["markets"][0]
+    return _first_market("kalshi_markets.json")
 
 
 def us_market() -> dict[str, Any]:
-    return load("polymarket_us_markets.json")["markets"][0]
+    return _first_market("polymarket_us_markets.json")
 
 
 # ------------------------------------------------------------------------ Kalshi

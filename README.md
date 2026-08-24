@@ -81,8 +81,13 @@ docker compose up          # PostgreSQL + the dashboard
 ```bash
 .venv/bin/pytest                       # fixture-backed; never touches a live API
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
-.venv/bin/mypy
+.venv/bin/mypy                         # application (src/event_arb)
+.venv/bin/mypy --config-file mypy-tests.ini   # test suite, same strictness
 ```
+
+The two mypy passes are separate because `[tool.mypy]` checks only the `event_arb`
+package. Widening it to cover `tests/` would pull test-only relaxations into the
+application's strictness, so tests get their own config at the same strictness instead.
 
 Optional read-only live tests are marked and **deselected by default**:
 

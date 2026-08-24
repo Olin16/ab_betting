@@ -32,7 +32,11 @@ def test_snapshot_establishes_state_and_clears_resync_flag() -> None:
     state = KalshiBookState("M")
     assert state.needs_resync is True
     book = state.apply_snapshot(SNAPSHOT, seq=5)
-    assert state.needs_resync is False
+    # Read into a local: mypy keeps its narrowing of `state.needs_resync` across the call
+    # above, so asserting on the attribute directly makes everything after it unreachable
+    # to the checker — the assertions would be silently unverified.
+    cleared: bool = state.needs_resync
+    assert cleared is False
     assert state.last_seq == 5
     assert book.yes.bids[0].price == Decimal("0.53")
 
@@ -284,8 +288,10 @@ async def test_a_real_gap_on_one_subscription_resyncs_only_that_market() -> None
 
     resyncs = [m for m in connection.sent if m.get("cmd") == "update_subscription"]
     assert len(resyncs) == 1
-    assert resyncs[0]["params"]["market_tickers"] == ["MKT-A"]
-    assert resyncs[0]["params"]["sid"] == 1
+    params = resyncs[0]["params"]
+    assert isinstance(params, dict)
+    assert params["market_tickers"] == ["MKT-A"]
+    assert params["sid"] == 1
     # The healthy subscription is untouched.
     assert stream._states[2].needs_resync is False
 

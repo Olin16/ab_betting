@@ -16,7 +16,7 @@ from event_arb.domain.enums import (
     Venue,
     VenueProduct,
 )
-from event_arb.domain.keys import kalshi_key, polymarket_key
+from event_arb.domain.keys import MarketKey, kalshi_key, polymarket_key
 from event_arb.domain.models import (
     BookLevel,
     MarketPair,
@@ -82,7 +82,7 @@ def poly_book(received_at: datetime) -> OrderBook:
     )
 
 
-def markets(rules: str = "shared rules") -> dict[tuple[Venue, str], VenueMarket]:
+def markets(rules: str = "shared rules") -> dict[MarketKey, VenueMarket]:
     return {
         KALSHI_KEY: VenueMarket(
             venue=Venue.KALSHI,

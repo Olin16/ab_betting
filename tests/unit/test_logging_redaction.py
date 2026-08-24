@@ -63,7 +63,9 @@ def test_hex_private_keys_are_redacted() -> None:
 
 
 def test_nested_structures_are_redacted_recursively() -> None:
-    event = {"request": {"headers": {"Authorization": "Bearer abc"}, "path": "/markets"}}
+    event: dict[str, object] = {
+        "request": {"headers": {"Authorization": "Bearer abc"}, "path": "/markets"}
+    }
     result = process(event)
     request = result["request"]
     assert isinstance(request, dict)
@@ -86,5 +88,7 @@ def test_ordinary_values_pass_through_unchanged() -> None:
 
 
 def test_signed_request_payloads_are_not_logged_verbatim() -> None:
-    event = {"signed_request": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefg"}
+    event: dict[str, object] = {
+        "signed_request": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefg"
+    }
     assert process(event)["signed_request"] == REDACTED

@@ -32,8 +32,14 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check .
 
-      - name: mypy
+      - name: mypy (application)
         run: uv run mypy
+
+      # A separate pass: pyproject's config checks only the event_arb package, so tests
+      # were never type-checked at all. It found stale annotations left by a refactor and
+      # an assertion that mypy considered unreachable — i.e. silently unverified.
+      - name: mypy (tests)
+        run: uv run mypy --config-file mypy-tests.ini
 
       - name: Tests
         # -m "not live" is the default via addopts, but stated explicitly here so CI can
