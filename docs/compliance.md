@@ -194,6 +194,30 @@ to grant access; that is the route to seek explicit permission.
 window already applied for Kalshi, and the same third-party sharing block applies to
 webhook payloads. Neither cures the underlying permission question.
 
+---
+
+## Sportsbook odds providers
+
+**API access is separately licensed.** OpticOdds (whose developer portal is where
+`developer.oddsjam.com` now redirects) issues license keys through sales contact only.
+There is no self-serve tier. The public Terms of Service prohibit using "the Service for
+any revenue-generating endeavor or commercial enterprise", which is a general user
+agreement — programmatic access sits under a separate written contract.
+
+**A retail OddsJam dashboard subscription does not convey API rights.** Assuming otherwise
+is the single most likely compliance error in this area, so the code refuses to build a
+live provider client at all: Phase S3 is blocked pending a verified license.
+
+**Absolute prohibitions in this project, regardless of license:**
+
+- No scraping of any dashboard, authenticated or public.
+- No browser automation, CAPTCHA handling, or anti-bot evasion.
+- No credential sharing or use of any interface the operator is not authorized to automate.
+- No bet placement. Sportsbook execution is manual and outside this system entirely.
+
+**Unresolved before any live provider use:** permitted retention window, whether derived
+data may be stored, and whether any output may be shared. None are addressed publicly.
+
 ## Outstanding human gates
 
 - [ ] **Confirm the operator's jurisdiction and selected product.** A US operator must not

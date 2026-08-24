@@ -232,6 +232,65 @@ configurable haircut, never assumed to be 1.0000 silently.
 
 ---
 
+## Sportsbook odds providers (OpticOdds / OddsJam)
+
+### D0. Provider identity — VERIFIED
+`https://developer.oddsjam.com/` returns **301** to `https://developer.opticodds.com/`
+(observed 2026-08-23). They are one API. Both provider identities are retained in the data
+model for provenance; the schema family is shared.
+
+### D1. Licensing — VERIFIED as a blocker
+API access requires a license key obtained through sales contact. No self-serve tier, no
+published pricing, no free trial. The public Terms of Service state "You may not use the
+Service for any revenue-generating endeavor or commercial enterprise", which is a general
+user agreement rather than the API license. **A retail dashboard subscription does not
+convey API rights.** No live provider client may be built until a written agreement exists.
+
+### D2. REST surface — VERIFIED (documentation), UNTESTED (no calls made)
+Base `https://api.opticodds.com/api/v3/`. Auth via `X-Api-Key` header; a `key` query
+parameter is also documented but is **deliberately not used** because query strings leak
+into logs and intermediaries.
+
+`GET /fixtures/odds` requires `sportsbook` (1–5 values) plus one of `fixture_id`,
+`team_id`, `player_id`. `odds_format` defaults to `AMERICAN`.
+
+Quote fields: `sportsbook`, `market`, `market_id`, `selection`, `normalized_selection`,
+`price`, `points` (nullable), `selection_line` (nullable), `is_main`, `timestamp`,
+`limits.max` (**nullable**), `player_id`, `team_id`, `grouping_key`, `deep_link`.
+
+- **CRITICAL:** `price` is a JSON *number*. A stock decoder yields a binary float before
+  our code sees it. Payloads must be decoded with `json.loads(..., parse_float=Decimal)`.
+- **ASSUMPTION:** `timestamp` is a Unix epoch float in seconds. Not stated explicitly.
+- **ASSUMPTION:** `limits.max` is a currency amount in the account's settlement currency,
+  and its absence means "no published limit", not "unlimited".
+
+### D3. Streaming — VERIFIED (documentation), UNTESTED
+`GET /stream/odds/{sport}` via Server-Sent Events. Events: `connected`, `ping` (every 5 s),
+`odds`, `locked-odds`, `fixture-status`. Continuity is by `entry_id`; reconnect supplying
+`last_entry_id`. Documented `retry: 5000`.
+
+- **ASSUMPTION:** `last_entry_id` replays every missed event rather than only the latest
+  per selection. Until confirmed against a recorded session, a reconnect is treated as
+  invalidating local state, exactly as with the exchange feeds.
+- **ASSUMPTION:** `locked-odds` means suspended *or* removed; the two are not
+  distinguished, so both map to a suspended quote rather than a deletion.
+
+### D4. Rate limits — VERIFIED
+2500 requests / 15 s general; 250 / 15 s for new streaming connections; 10 / 15 s for
+historical odds.
+
+### D5. Retention and redistribution — UNVERIFIED
+Not addressed in public documentation. Must be settled in the written license before live
+use. Bounded retention is applied by default.
+
+### D6. Other platforms — UNVERIFIED
+Claims that Novig or ProphetX expose usable retail APIs come from third-party summaries
+only. `docs.prophetx.co` and `docs.novig.com` appear to exist, but neither has been
+confirmed as retail-accessible under terms this operator can satisfy. Recorded as
+unverified; no implementation.
+
+---
+
 ## Cross-cutting
 
 ### C0. Venue terms — REVIEWED for Kalshi
