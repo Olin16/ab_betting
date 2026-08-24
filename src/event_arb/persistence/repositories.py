@@ -252,6 +252,16 @@ class OpportunityRepository:
         self._session = session
 
     async def record(self, opportunity: Opportunity, *, alert_suppressed: bool = False) -> None:
+        """Store one detection.
+
+        Suppressed detections keep every economic column but **not** the full ``snapshot``
+        JSON. That blob is ~1.2 kB and is near-identical across consecutive sightings of the
+        same opportunity; at a 5 s cycle it projects to over a gigabyte per month for two
+        detections per cycle. What a suppressed row is for — how long an opportunity
+        persisted, at what size and profit — lives in the columns. The per-cycle leg detail
+        is deliberately not retained for repeats; the announced row for that dedup key has
+        it.
+        """
         self._session.add(
             OpportunityRow(
                 pair_id=opportunity.pair_id,
@@ -269,10 +279,25 @@ class OpportunityRepository:
                 net_profit=opportunity.net_profit,
                 return_on_capital=opportunity.return_on_capital,
                 risk_flags={"flags": [f.value for f in opportunity.risk_flags]},
-                snapshot=_json_safe(opportunity.model_dump(mode="json")),
+                snapshot=(
+                    {} if alert_suppressed else _json_safe(opportunity.model_dump(mode="json"))
+                ),
                 detected_at=opportunity.detected_at,
             )
         )
+
+    async def prune(self, older_than: timedelta, now: datetime | None = None) -> int:
+        """Delete detections beyond the retention window. Returns rows removed."""
+        cutoff = (now or datetime.now(UTC)) - older_than
+        stale = (
+            await self._session.scalars(
+                select(OpportunityRow.id).where(OpportunityRow.detected_at < cutoff)
+            )
+        ).all()
+        if not stale:
+            return 0
+        await self._session.execute(delete(OpportunityRow).where(OpportunityRow.id.in_(stale)))
+        return len(stale)
 
     async def recent(self, limit: int = 100) -> Sequence[OpportunityRow]:
         return (
@@ -311,6 +336,19 @@ class PaperTradeRepository:
                 settled_at=trade.settled_at,
             )
         )
+
+    async def prune(self, older_than: timedelta, now: datetime | None = None) -> int:
+        """Delete simulated trades beyond the retention window. Returns rows removed."""
+        cutoff = (now or datetime.now(UTC)) - older_than
+        stale = (
+            await self._session.scalars(
+                select(PaperTradeRow.id).where(PaperTradeRow.created_at < cutoff)
+            )
+        ).all()
+        if not stale:
+            return 0
+        await self._session.execute(delete(PaperTradeRow).where(PaperTradeRow.id.in_(stale)))
+        return len(stale)
 
     async def recent(self, limit: int = 100) -> Sequence[PaperTradeRow]:
         return (

@@ -79,10 +79,29 @@ deployment.
 
 ## Data retention
 
-Retained:
-- normalized market metadata (title, rules text, close time, settlement source, fees);
-- normalized order-book snapshots, for replay and audit;
-- derived opportunities, paper trades, and the audit log.
+Retained, each with a bounded window:
+
+| Table | Window | Setting |
+| --- | --- | --- |
+| `orderbook_snapshots` | 72 h | `TRIAL__SNAPSHOT_RETENTION_HOURS` |
+| `opportunities` | 90 d | `TRIAL__OPPORTUNITY_RETENTION_DAYS` |
+| `paper_trades` | 365 d | `TRIAL__PAPER_TRADE_RETENTION_DAYS` |
+| `venue_markets`, `market_pairs` | current state, no history | — |
+| `audit_log` | **unbounded** — see below | — |
+
+Pruning runs in the trial's maintenance loop. Only snapshots used to be pruned; detections
+and paper trades grew without limit, which a multi-week trial does not survive. Measured on
+fixtures at a 5 s cycle with two detections per cycle, the opportunities table projects to
+roughly 970,000 rows per 28 days.
+
+Cooldown-suppressed detections store their economic columns but not the full `snapshot`
+JSON. That blob is ~1.2 kB and near-identical across consecutive sightings of the same
+opportunity; omitting it for repeats takes the projected 28-day snapshot volume from
+~1.17 GB to ~0.025 GB. The announced row for each dedup key keeps the full leg detail.
+
+`audit_log` is deliberately not pruned: it is the record of who approved what and why, and
+of every automated suspension. It is low-volume (approvals, suspensions, migrations) rather
+than per-cycle. Watch it anyway on a long run.
 
 Not retained:
 - raw API payloads beyond a bounded debug buffer (off by default);

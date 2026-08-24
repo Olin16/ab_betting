@@ -181,6 +181,14 @@ class TrialSettings(BaseModel):
     #: Delete stored order-book snapshots older than this. Bounded retention is required
     #: by the Kalshi Developer Agreement §3.1; see docs/compliance.md.
     snapshot_retention_hours: int = 72
+    #: Delete detections older than this. Unlike snapshots, these are the trial's primary
+    #: evidence, so the default outlives a multi-week run with room for analysis afterwards.
+    #: Left unbounded, the table grew without limit: at a 5s cycle and two detections per
+    #: cycle it projects to roughly 970,000 rows per 28 days.
+    opportunity_retention_days: int = 90
+    #: Paper trades are far rarer than detections and are the record of simulated
+    #: execution, so they are kept longer.
+    paper_trade_retention_days: int = 365
 
     #: Clock tolerance between our receipt timestamps and the scan clock. Not a stand-in
     #: for request latency, which is measured rather than assumed once a refresh has run.

@@ -711,14 +711,35 @@ class Scanner:
         return report
 
     async def prune_snapshots(self) -> int:
-        """Enforce bounded retention. Returns the number of snapshots removed."""
+        """Enforce bounded retention across every table that grows with time.
+
+        Only order-book snapshots used to be pruned. Detections and paper trades grew
+        without limit, which a multi-week trial does not survive: at a 5s cycle with two
+        detections per cycle the opportunities table projects to ~970,000 rows per 28 days.
+
+        Returns the total number of rows removed.
+        """
         if self.database is None:
             return 0
-        window = timedelta(hours=self.settings.trial.snapshot_retention_hours)
+        trial = self.settings.trial
         async with self._db_lock, self.database.session() as session:
-            removed = await OrderBookSnapshotRepository(session).prune(window)
+            snapshots = await OrderBookSnapshotRepository(session).prune(
+                timedelta(hours=trial.snapshot_retention_hours)
+            )
+            opportunities = await OpportunityRepository(session).prune(
+                timedelta(days=trial.opportunity_retention_days)
+            )
+            trades = await PaperTradeRepository(session).prune(
+                timedelta(days=trial.paper_trade_retention_days)
+            )
+        removed = snapshots + opportunities + trades
         if removed:
-            log.info("scanner.snapshots_pruned", removed=removed)
+            log.info(
+                "scanner.retention_pruned",
+                snapshots=snapshots,
+                opportunities=opportunities,
+                paper_trades=trades,
+            )
         return removed
 
     # ----------------------------------------------------------------------- misc
