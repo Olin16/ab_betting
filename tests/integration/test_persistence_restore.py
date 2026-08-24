@@ -429,3 +429,80 @@ async def test_a_reviewed_source_lost_in_storage_suspends_on_restart(
     second.state.observed_markets.update({(Venue.KALSHI, KALSHI_FED), (Venue.POLYMARKET, POLY_FED)})
     await second.restore()
     assert second.state.pairs[pair_id].is_tradable_pair is False
+
+
+# --------------------------------------- fee configuration survives a restart
+
+
+async def test_fee_policy_and_rebate_survive_a_round_trip(
+    fixture_dir: Path, database: Database
+) -> None:
+    """Losing the policy made the dispatcher refuse to price after every restart."""
+    from event_arb.domain.enums import FeePolicy, VenueProduct
+    from event_arb.domain.models import VenueMarket
+    from event_arb.persistence.repositories import VenueMarketRepository
+    from event_arb.venues.polymarket_us.fees import polymarket_us_fee_config
+
+    market = VenueMarket(
+        venue=Venue.POLYMARKET,
+        venue_market_id="pmus-round-trip",
+        title="T",
+        rules_text="r",
+        product=VenueProduct.POLYMARKET_US,
+        fee_config=polymarket_us_fee_config(),
+    )
+    async with database.session() as session:
+        await VenueMarketRepository(session).upsert(market)
+    async with database.session() as session:
+        restored = (await VenueMarketRepository(session).load_all())[
+            (Venue.POLYMARKET, "pmus-round-trip")
+        ]
+
+    assert restored.fee_config.fee_policy is FeePolicy.POLYMARKET_US_BANKERS_CENT
+    assert restored.fee_config.maker_rebate_rate == Decimal("0.0125")
+    assert restored.fee_config.taker_rate == market.fee_config.taker_rate
+    assert restored.fee_config.source == market.fee_config.source
+
+
+async def test_persist_restart_and_scan_still_produces_an_opportunity(
+    fixture_dir: Path, database: Database
+) -> None:
+    """The end-to-end guarantee: a restart must not break pricing.
+
+    Before fee_policy was persisted this raised UnknownFeePolicyError on the first scan
+    after any restart, because the restored market carried no rounding policy.
+    """
+    settings = make_settings(fixture_dir)
+    first = await boot(settings, database)
+    await first.persist_markets()
+    pair_id = next(iter(first.state.pairs))
+    await first.approve_and_persist(pair_id, approved_by="reviewer@example.com")
+    assert first.scan().confirmed
+
+    # Restart: discovery repopulates live metadata, restore brings back approvals.
+    second = Scanner(settings, database=database)
+    await second.discover()
+    await second.restore()
+    await second.refresh_books()
+
+    result = second.scan()
+    assert result.confirmed, "scanning broke after a restart"
+    assert result.confirmed[0].polymarket_fees >= 0
+
+
+async def test_an_unknown_fee_policy_refuses_to_price_and_says_why(
+    fixture_dir: Path, database: Database
+) -> None:
+    """Rows predating the column are 'unknown'; pricing them would be a guess."""
+    from event_arb.domain.enums import FeePolicy
+    from event_arb.domain.models import FeeConfig
+    from event_arb.fees import UnknownFeePolicyError, taker_fee_for
+
+    stale = FeeConfig(
+        venue=Venue.POLYMARKET,
+        taker_rate=Decimal("0.05"),
+        fee_policy=FeePolicy.UNKNOWN,
+        source="pre-migration row",
+    )
+    with pytest.raises(UnknownFeePolicyError, match="pre-migration row"):
+        taker_fee_for(Decimal("100"), Decimal("0.5"), stale)

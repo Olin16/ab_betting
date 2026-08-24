@@ -97,6 +97,10 @@ class VenueMarketRow(Base):
     fee_maker_rate: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
     fee_multiplier: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("1"))
     fee_source: Mapped[str] = mapped_column(String(128), default="default")
+    #: FeePolicy value. Rows written before this column existed are "unknown", which the
+    #: dispatcher refuses to price — fresh venue metadata must be fetched first.
+    fee_policy: Mapped[str] = mapped_column(String(48), default="unknown")
+    fee_maker_rebate_rate: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_tradable: Mapped[bool] = mapped_column(Boolean, default=True)
     raw_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

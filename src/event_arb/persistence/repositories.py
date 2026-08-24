@@ -24,7 +24,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from event_arb.domain.enums import MatchStatus, Venue, VenueProduct
+from event_arb.domain.enums import FeePolicy, MatchStatus, Venue, VenueProduct
 from event_arb.domain.models import (
     FeeConfig,
     MarketPair,
@@ -103,6 +103,8 @@ class VenueMarketRepository:
         row.fee_maker_rate = market.fee_config.maker_rate
         row.fee_multiplier = market.fee_config.multiplier
         row.fee_source = market.fee_config.source
+        row.fee_policy = market.fee_config.fee_policy.value
+        row.fee_maker_rebate_rate = market.fee_config.maker_rebate_rate
         row.is_active = market.is_active
         row.is_tradable = market.is_tradable
         row.raw_metadata = _json_safe(market.raw_metadata)
@@ -137,6 +139,8 @@ class VenueMarketRepository:
                 taker_rate=row.fee_taker_rate,
                 maker_rate=row.fee_maker_rate,
                 multiplier=row.fee_multiplier,
+                maker_rebate_rate=row.fee_maker_rebate_rate,
+                fee_policy=FeePolicy(row.fee_policy),
                 source=row.fee_source,
             ),
             is_active=row.is_active,
