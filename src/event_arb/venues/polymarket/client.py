@@ -36,6 +36,10 @@ from event_arb.venues.polymarket.mapper import build_book, parse_market
 
 __all__ = ["PolymarketClient"]
 
+#: Used when a 429 carries no Retry-After. Long enough to be a real pause rather than a
+#: token-bucket hiccup; a venue that rejected us deserves more than one interval of quiet.
+_DEFAULT_429_PAUSE_SECONDS = 30.0
+
 log = get_logger(__name__)
 
 
@@ -95,10 +99,15 @@ class PolymarketClient(VenueAdapter):
 
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
+            delay = float(retry_after) if retry_after else None
+            # Obey the venue's own instruction before raising. The token bucket caps our
+            # rate but does not stop us, so without this we kept issuing at the configured
+            # rate for the whole cooldown the venue had just asked us to observe.
+            self._limiter.pause_for(delay if delay is not None else _DEFAULT_429_PAUSE_SECONDS)
             raise RateLimitError(
                 f"Polymarket rate limited on {path}",
                 Venue.POLYMARKET,
-                retry_after=float(retry_after) if retry_after else None,
+                retry_after=delay,
             )
         if response.status_code >= 500:
             raise TransientError(f"Polymarket {response.status_code} on {path}", Venue.POLYMARKET)

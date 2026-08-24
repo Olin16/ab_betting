@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
@@ -45,8 +46,9 @@ class TransientError(VenueError):
 class RateLimitError(TransientError):
     """429 or a documented rate-limit rejection.
 
-    ``retry_after`` carries the server's own guidance; it is always honoured rather than
-    replaced by our own backoff, so we never argue with a venue about its limits.
+    ``retry_after`` carries the server's own guidance. Pass it to
+    :meth:`RateLimiter.pause_for` so the venue's own instruction is obeyed rather than
+    replaced by our backoff — we never argue with a venue about its limits.
     """
 
     def __init__(
@@ -82,10 +84,40 @@ class RateLimiter:
         self._tokens = self._capacity
         self._updated = 0.0
         self._lock = asyncio.Lock()
+        #: Loop time before which no request may go out, set by :meth:`pause_for` when a
+        #: venue answers 429 with Retry-After.
+        self._paused_until = 0.0
+
+    def pause_for(self, seconds: float) -> None:
+        """Hold every request on this venue for ``seconds``.
+
+        Called with a 429's ``Retry-After``. The token bucket alone does not satisfy a
+        venue that has explicitly asked us to stop: it caps our *rate*, so after a 429 we
+        would keep issuing at the configured rate for the whole cooldown. Refusing to send
+        anything until the venue's own deadline is the only response that respects the
+        limit as a term of use rather than a throughput setting.
+        """
+        if seconds <= 0:
+            return
+        # No running loop during synchronous setup; nothing has been sent yet either.
+        with contextlib.suppress(RuntimeError):
+            loop = asyncio.get_running_loop()
+            self._paused_until = max(self._paused_until, loop.time() + seconds)
+
+    @property
+    def paused(self) -> bool:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return loop.time() < self._paused_until
 
     async def acquire(self) -> None:
         async with self._lock:
             loop = asyncio.get_running_loop()
+            remaining = self._paused_until - loop.time()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
             now = loop.time()
             if self._updated == 0.0:
                 self._updated = now
