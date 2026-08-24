@@ -36,6 +36,8 @@ __all__ = [
     "OpportunityRow",
     "OrderBookSnapshotRow",
     "PaperTradeRow",
+    "SportsbookMappingRow",
+    "SportsbookQuoteRow",
     "VenueMarketRow",
 ]
 
@@ -173,6 +175,89 @@ class PaperTradeRow(Base):
     settlement_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SportsbookQuoteRow(Base):
+    """Stored sportsbook quotes.
+
+    Retention is bounded like every other ingested dataset. Provider licences govern how
+    long third-party odds may be retained, and that has not been verified for any provider
+    here, so the conservative posture applies by default.
+    """
+
+    __tablename__ = "sportsbook_quotes"
+    __table_args__ = (
+        Index("ix_sb_quotes_lookup", "provider", "provider_event_id", "received_at"),
+        Index("ix_sb_quotes_key", "quote_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    sportsbook: Mapped[str] = mapped_column(String(64))
+    provider_event_id: Mapped[str] = mapped_column(String(128))
+    sportsbook_event_id: Mapped[str | None] = mapped_column(String(128))
+    provider_market_id: Mapped[str] = mapped_column(String(128))
+    market_type: Mapped[str] = mapped_column(String(32))
+    period: Mapped[str] = mapped_column(String(32), default="full_game")
+    sport: Mapped[str] = mapped_column(String(64), default="")
+    league: Mapped[str] = mapped_column(String(64), default="")
+    selection: Mapped[str] = mapped_column(String(255))
+    normalized_selection: Mapped[str] = mapped_column(String(255), default="")
+    line: Mapped[Decimal | None] = mapped_column(DecimalString)
+    odds: Mapped[Decimal] = mapped_column(DecimalString)
+    odds_format: Mapped[str] = mapped_column(String(16), default="american")
+    decimal_odds: Mapped[Decimal] = mapped_column(DecimalString)
+    #: NULL means the provider published no limit. It does not mean "unlimited", and it
+    #: must never be backfilled with an assumed number.
+    max_stake: Mapped[Decimal | None] = mapped_column(DecimalString)
+    currency: Mapped[str] = mapped_column(String(8), default="USD")
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    is_stale: Mapped[bool] = mapped_column(Boolean, default=False)
+    quote_key: Mapped[str] = mapped_column(String(512))
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    raw_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class SportsbookMappingRow(Base):
+    """A proposed or approved sportsbook-quote to exchange-contract mapping.
+
+    Separate from ``market_pairs`` on purpose. An exchange pair maps two order books; this
+    maps a book's price to a contract, which has different approval dimensions (overtime,
+    push, grading source) and must never be restorable as an exchange approval.
+    """
+
+    __tablename__ = "sportsbook_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_market_id",
+            "selection",
+            "exchange_venue",
+            "exchange_market_id",
+            "exchange_outcome",
+            name="uq_sb_mapping",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    sportsbook: Mapped[str] = mapped_column(String(64))
+    provider_event_id: Mapped[str] = mapped_column(String(128))
+    provider_market_id: Mapped[str] = mapped_column(String(128))
+    selection: Mapped[str] = mapped_column(String(255))
+    exchange_venue: Mapped[str] = mapped_column(String(32))
+    exchange_market_id: Mapped[str] = mapped_column(String(255))
+    exchange_outcome: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(32), default="suggested")
+    manually_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewer_notes: Mapped[str] = mapped_column(Text, default="")
+    rule_differences: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    sportsbook_fingerprint_at_approval: Mapped[str | None] = mapped_column(String(64))
+    exchange_fingerprint_at_approval: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class AuditLogRow(Base):
