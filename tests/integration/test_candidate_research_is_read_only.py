@@ -24,14 +24,6 @@ from event_arb.scanner import Scanner
 pytestmark = pytest.mark.anyio
 
 
-@pytest.fixture
-async def database() -> Database:
-    """In-memory, per-test. Never the project database."""
-    db = Database("sqlite+aiosqlite:///:memory:")
-    await db.create_all()
-    return db
-
-
 #: Every state a human can put a pair into. None may be altered by research.
 HUMAN_DISPOSITIONS = [
     MatchStatus.APPROVED,

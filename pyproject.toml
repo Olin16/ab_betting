@@ -79,4 +79,10 @@ addopts = "-q --strict-markers -m 'not live'"
 markers = [
     "live: optional read-only tests that hit real venue APIs (deselected by default)",
 ]
-filterwarnings = ["error::DeprecationWarning:event_arb.*"]
+filterwarnings = [
+    "error::DeprecationWarning:event_arb.*",
+    # A background thread outliving its event loop means an engine or session was never
+    # disposed. It surfaces as noise attributed to whichever test happened to be running,
+    # which is indistinguishable from an unrelated flake — so fail on it instead.
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+]

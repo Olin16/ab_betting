@@ -8,12 +8,14 @@ read-only exception and is deselected by default.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 
 from event_arb.config import PolymarketProduct, PolymarketSettings, Settings
 from event_arb.domain.enums import Venue
+from event_arb.persistence.database import Database
 from event_arb.venues.fixture import FixtureAdapter
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -172,3 +174,24 @@ def _block_raw_sockets(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(socket.socket, "connect", refuse_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", refuse_connect)
+
+
+@pytest.fixture
+async def database() -> AsyncIterator[Database]:
+    """A disposed-on-teardown in-memory database. Never the project database.
+
+    Disposal is the point. Each test gets its own event loop, and an undisposed engine
+    keeps a pooled aiosqlite connection whose worker thread outlives that loop. The thread
+    then calls ``call_soon_threadsafe`` on a closed loop and the suite emits
+    ``RuntimeError: Event loop is closed`` from a background thread — noise that is
+    indistinguishable from a real teardown bug, and which hid one here for a while.
+
+    Shared rather than redefined per module so a new test file inherits the cleanup instead
+    of having to remember it.
+    """
+    db = Database("sqlite+aiosqlite:///:memory:")
+    await db.create_all()
+    try:
+        yield db
+    finally:
+        await db.dispose()

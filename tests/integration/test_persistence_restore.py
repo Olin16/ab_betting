@@ -35,13 +35,6 @@ from event_arb.scanner import Scanner
 from tests.conftest import KALSHI_FED, POLY_FED
 
 
-@pytest.fixture
-async def database() -> Database:
-    db = Database("sqlite+aiosqlite:///:memory:")
-    await db.create_all()
-    return db
-
-
 def make_settings(fixture_dir: Path) -> Settings:
     return Settings(
         # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
@@ -165,6 +158,7 @@ async def test_missing_market_metadata_suspends_rather_than_trusts(
     # Restore against a database whose market rows were never written.
     empty = Database("sqlite+aiosqlite:///:memory:")
     await empty.create_all()
+    # Disposed below: an undisposed engine leaves an aiosqlite worker thread behind.
     async with empty.session() as session:
         from event_arb.persistence.repositories import (
             MarketPairRepository,
@@ -172,11 +166,14 @@ async def test_missing_market_metadata_suspends_rather_than_trusts(
 
         await MarketPairRepository(session).save(first.state.pairs[pair_id])
 
-    second = Scanner(settings, database=empty)
-    await second.restore()
-    assert second.state.pairs[pair_id].is_tradable_pair is False
-    assert second.last_restore is not None
-    assert second.last_restore.approvals_kept == 0
+    try:
+        second = Scanner(settings, database=empty)
+        await second.restore()
+        assert second.state.pairs[pair_id].is_tradable_pair is False
+        assert second.last_restore is not None
+        assert second.last_restore.approvals_kept == 0
+    finally:
+        await empty.dispose()
 
 
 async def test_suspension_on_restore_is_audited(fixture_dir: Path, database: Database) -> None:

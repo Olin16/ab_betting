@@ -90,23 +90,38 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             trading_enabled=config.trading_enabled,
             live_trading_possible=config.live_trading_possible,
         )
-        if runtime.database is not None:
-            await runtime.database.create_all()
-        await runtime.discover()
-        # Restore before seeding so stored approvals are re-verified against current
-        # rules; a rules change while we were down must suspend, not reinstate.
-        report = await runtime.restore()
-        if report.suspended:
-            log.warning("app.startup.approvals_suspended", **report.as_dict())
-        # Pairs must exist before books are refreshed: the refresh is scoped to the
-        # markets those pairs reference, so refreshing first would target nothing.
-        runtime.seed_watched_pairs()
-        runtime.generate_pairs()
-        await runtime.persist_markets()
-        await runtime.persist_pairs()
-        await runtime.refresh_books()
-
         trial: TrialRunner | None = None
+        try:
+            if runtime.database is not None:
+                await runtime.database.create_all()
+            await runtime.discover()
+            # Restore before seeding so stored approvals are re-verified against current
+            # rules; a rules change while we were down must suspend, not reinstate.
+            report = await runtime.restore()
+            if report.suspended:
+                log.warning("app.startup.approvals_suspended", **report.as_dict())
+            # Pairs must exist before books are refreshed: the refresh is scoped to the
+            # markets those pairs reference, so refreshing first would target nothing.
+            runtime.seed_watched_pairs()
+            runtime.generate_pairs()
+            await runtime.persist_markets()
+            await runtime.persist_pairs()
+            await runtime.refresh_books()
+
+            trial = await _start_trial(app, runtime, config)
+            yield
+        finally:
+            # finally, and covering startup too: a failure while discovering or restoring
+            # used to skip both the task shutdown and the engine dispose, leaving
+            # background tasks and a pooled connection behind on every failed boot.
+            if trial is not None:
+                try:
+                    await trial.stop()
+                except Exception:
+                    log.exception("app.shutdown.trial_stop_failed")
+            await runtime.close()
+
+    async def _start_trial(app: FastAPI, runtime: Scanner, config: Settings) -> TrialRunner | None:
         if config.trial.enabled:
             trial = TrialRunner(
                 runtime,
@@ -120,12 +135,8 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             )
             app.state.trial = trial
             await trial.start()
-
-        yield
-
-        if trial is not None:
-            await trial.stop()
-        await runtime.close()
+            return trial
+        return None
 
     app = FastAPI(
         lifespan=lifespan,

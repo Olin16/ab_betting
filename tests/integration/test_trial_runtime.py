@@ -13,8 +13,6 @@ from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 
-import pytest
-
 from event_arb.config import (
     AlertSettings,
     OpportunitySettings,
@@ -30,13 +28,6 @@ from event_arb.persistence.repositories import OpportunityRepository, PaperTrade
 from event_arb.runtime import TrialRunner
 from event_arb.scanner import Scanner
 from tests.conftest import KALSHI_FED, POLY_FED
-
-
-@pytest.fixture
-async def database() -> Database:
-    db = Database("sqlite+aiosqlite:///:memory:")
-    await db.create_all()
-    return db
 
 
 def make_settings(fixture_dir: Path, **trial_overrides: object) -> Settings:

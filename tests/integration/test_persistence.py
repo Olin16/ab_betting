@@ -16,24 +16,15 @@ from event_arb.persistence.models import (
 )
 
 
-async def make_db() -> Database:
-    db = Database("sqlite+aiosqlite:///:memory:")
-    await db.create_all()
-    return db
-
-
-async def test_schema_creates_cleanly() -> None:
-    db = await make_db()
-    async with db.session() as session:
+async def test_schema_creates_cleanly(database: Database) -> None:
+    async with database.session() as session:
         assert (await session.execute(select(VenueMarketRow))).all() == []
-    await db.dispose()
 
 
-async def test_decimals_round_trip_exactly() -> None:
+async def test_decimals_round_trip_exactly(database: Database) -> None:
     """SQLite has no exact decimal type; storing money as text is what keeps it exact."""
-    db = await make_db()
     tricky = [Decimal("0.0001"), Decimal("0.07"), Decimal("1.7325"), Decimal("93.0000")]
-    async with db.session() as session:
+    async with database.session() as session:
         session.add(
             VenueMarketRow(
                 venue="KALSHI",
@@ -46,20 +37,18 @@ async def test_decimals_round_trip_exactly() -> None:
                 fee_multiplier=tricky[3],
             )
         )
-    async with db.session() as session:
+    async with database.session() as session:
         row = (await session.execute(select(VenueMarketRow))).scalar_one()
         assert [row.tick_size, row.fee_taker_rate, row.fee_maker_rate, row.fee_multiplier] == tricky
         assert all(isinstance(v, Decimal) for v in (row.tick_size, row.fee_taker_rate))
-    await db.dispose()
 
 
-async def test_float_is_rejected_at_the_persistence_boundary() -> None:
+async def test_float_is_rejected_at_the_persistence_boundary(database: Database) -> None:
     """A float reaching the DB would silently lose exactness; fail loudly instead."""
     import pytest
 
-    db = await make_db()
     with pytest.raises(Exception):  # noqa: B017 - driver wraps the TypeError
-        async with db.session() as session:
+        async with database.session() as session:
             session.add(
                 VenueMarketRow(
                     venue="KALSHI",
@@ -69,12 +58,10 @@ async def test_float_is_rejected_at_the_persistence_boundary() -> None:
                     tick_size=0.01,  # type: ignore[arg-type]
                 )
             )
-    await db.dispose()
 
 
-async def test_pair_and_opportunity_relationship() -> None:
-    db = await make_db()
-    async with db.session() as session:
+async def test_pair_and_opportunity_relationship(database: Database) -> None:
+    async with database.session() as session:
         session.add(
             MarketPairRow(
                 id="pair1",
@@ -87,7 +74,7 @@ async def test_pair_and_opportunity_relationship() -> None:
                 polymarket_rules_hash_at_approval="def",
             )
         )
-    async with db.session() as session:
+    async with database.session() as session:
         session.add(
             OpportunityRow(
                 pair_id="pair1",
@@ -106,16 +93,14 @@ async def test_pair_and_opportunity_relationship() -> None:
                 risk_flags={"flags": ["non_atomic_execution"]},
             )
         )
-    async with db.session() as session:
+    async with database.session() as session:
         row = (await session.execute(select(OpportunityRow))).scalar_one()
         assert row.net_profit == Decimal("3.6526")
         assert row.label == "confirmed"
-    await db.dispose()
 
 
-async def test_audit_rows_are_append_only_in_practice() -> None:
-    db = await make_db()
-    async with db.session() as session:
+async def test_audit_rows_are_append_only_in_practice(database: Database) -> None:
+    async with database.session() as session:
         session.add(
             AuditLogRow(
                 actor="reviewer@example.com",
@@ -125,8 +110,7 @@ async def test_audit_rows_are_append_only_in_practice() -> None:
                 created_at=datetime.now(UTC),
             )
         )
-    async with db.session() as session:
+    async with database.session() as session:
         rows = (await session.execute(select(AuditLogRow))).scalars().all()
         assert len(rows) == 1
         assert rows[0].action == "pair.approved"
-    await db.dispose()
