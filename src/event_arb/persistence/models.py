@@ -59,6 +59,38 @@ class DecimalString(TypeDecorator[Decimal]):
         return None if value is None else Decimal(value)
 
 
+class UtcDateTime(TypeDecorator[datetime]):
+    """A datetime that is always tz-aware UTC on the way out.
+
+    SQLite has no native timestamp type, so ``UtcDateTime()`` stores the value as
+    text and hands it back **naive** — the tzinfo is silently dropped. That is not cosmetic
+    here: ``close_time`` is part of the settlement fingerprint, so a market read back from
+    storage hashed differently from the same market read from the venue, and any comparison
+    between the two would report a rules change that never happened.
+
+    Aware values are converted to UTC before storage; naive values are rejected rather than
+    assumed to be UTC, because guessing a timezone is how a close time silently moves by
+    hours. PostgreSQL keeps the offset itself, so the read side is a no-op there.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError(
+                "refusing to store a naive datetime: its timezone would have to be guessed"
+            )
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -88,10 +120,10 @@ class VenueMarketRow(Base):
     rules_text: Mapped[str] = mapped_column(Text, default="")
     rules_hash: Mapped[str] = mapped_column(String(64))
     outcomes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    close_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    close_time: Mapped[datetime | None] = mapped_column(UtcDateTime())
     settlement_source: Mapped[str] = mapped_column(Text, default="")
     settlement_asset: Mapped[str] = mapped_column(String(8), default="USD")
-    settlement_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    settlement_deadline: Mapped[datetime | None] = mapped_column(UtcDateTime())
     tick_size: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0.01"))
     fee_taker_rate: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
     fee_maker_rate: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
@@ -104,7 +136,7 @@ class VenueMarketRow(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_tradable: Mapped[bool] = mapped_column(Boolean, default=True)
     raw_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_updated: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
 
 
 class MarketPairRow(Base):
@@ -142,9 +174,9 @@ class MarketPairRow(Base):
     polymarket_reviewed_source: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     kalshi_rules_hash_at_approval: Mapped[str | None] = mapped_column(String(64))
     polymarket_rules_hash_at_approval: Mapped[str | None] = mapped_column(String(64))
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(UtcDateTime())
     approved_by: Mapped[str | None] = mapped_column(String(128))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
 
     opportunities: Mapped[list[OpportunityRow]] = relationship(back_populates="pair")
 
@@ -164,8 +196,8 @@ class OrderBookSnapshotRow(Base):
     product: Mapped[str] = mapped_column(String(32), default="none")
     market_id: Mapped[str] = mapped_column(String(255))
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
-    exchange_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    exchange_timestamp: Mapped[datetime | None] = mapped_column(UtcDateTime())
+    received_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
     sequence: Mapped[int | None] = mapped_column(Integer)
     is_stale: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -190,7 +222,7 @@ class OpportunityRow(Base):
     return_on_capital: Mapped[Decimal] = mapped_column(DecimalString)
     risk_flags: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    detected_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
 
     pair: Mapped[MarketPairRow] = relationship(back_populates="opportunities")
 
@@ -207,8 +239,8 @@ class PaperTradeRow(Base):
     realized_pnl: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
     unhedged_quantity: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
     settlement_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
+    settled_at: Mapped[datetime | None] = mapped_column(UtcDateTime())
 
 
 class SportsbookQuoteRow(Base):
@@ -248,8 +280,8 @@ class SportsbookQuoteRow(Base):
     status: Mapped[str] = mapped_column(String(16), default="active")
     is_stale: Mapped[bool] = mapped_column(Boolean, default=False)
     quote_key: Mapped[str] = mapped_column(String(512))
-    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    observed_at: Mapped[datetime | None] = mapped_column(UtcDateTime())
+    received_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
     raw_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
@@ -289,9 +321,9 @@ class SportsbookMappingRow(Base):
     rule_differences: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     sportsbook_fingerprint_at_approval: Mapped[str | None] = mapped_column(String(64))
     exchange_fingerprint_at_approval: Mapped[str | None] = mapped_column(String(64))
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(UtcDateTime())
     approved_by: Mapped[str | None] = mapped_column(String(128))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
 
 
 class AuditLogRow(Base):
@@ -305,4 +337,4 @@ class AuditLogRow(Base):
     action: Mapped[str] = mapped_column(String(128))
     subject: Mapped[str] = mapped_column(String(255), default="")
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)

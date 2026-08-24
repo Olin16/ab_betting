@@ -206,7 +206,15 @@ class CandidateRecord:
     polymarket_title: str
     comparison: RulesComparison
     readiness: ReadinessReport
-    verified: bool = False
+    #: Whether a second, targeted request confirmed the Polymarket id still resolves.
+    #:
+    #: This is **not** verification of the candidate. The re-fetched record's metadata is
+    #: not read: nothing is re-normalized, no score is recomputed, no rule comparison is
+    #: re-run, no fingerprint is recalculated and no readiness check is repeated. All it
+    #: establishes is that the id was still returned by the venue at the time below.
+    #: Calling that "verified" invited a reviewer to skip exactly the work it did not do.
+    existence_rechecked: bool = False
+    existence_rechecked_at: datetime | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -220,7 +228,15 @@ class CandidateRecord:
             "material_differences": [d.dimension for d in self.comparison.material],
             "ready_for_approval": self.readiness.is_ready,
             "blockers": list(self.readiness.blocker_codes),
-            "targeted_reverify": self.verified,
+            "existence_rechecked": self.existence_rechecked,
+            "existence_rechecked_at": (
+                self.existence_rechecked_at.isoformat() if self.existence_rechecked_at else None
+            ),
+            "existence_recheck_scope": (
+                "the venue still returns this market id; no metadata was re-read"
+                if self.existence_rechecked
+                else "not rechecked"
+            ),
             # Never "candidate arbitrage": nothing here is approved.
             "label": "research_candidate",
         }
@@ -237,7 +253,9 @@ class DiscoveryReport:
     candidates_generated: int = 0
     candidates_retained: int = 0
     ready_for_approval: int = 0
-    verified: int = 0
+    #: How many shortlisted candidates had their id re-confirmed. See
+    #: :attr:`CandidateRecord.existence_rechecked` for what that does and does not mean.
+    existence_rechecked: int = 0
     parse_failures: int = 0
     rate_limited: int = 0
     pagination_cursors_ignored: int = 0
@@ -253,13 +271,16 @@ class DiscoveryReport:
             "candidates_generated": self.candidates_generated,
             "candidates_retained": self.candidates_retained,
             "ready_for_approval": self.ready_for_approval,
-            "verified": self.verified,
+            "existence_rechecked": self.existence_rechecked,
             "parse_failures": self.parse_failures,
             "rate_limited": self.rate_limited,
             "pagination_cursors_ignored": self.pagination_cursors_ignored,
             "preserved_dispositions": self.preserved_dispositions,
+            # Constant zeros, reported rather than assumed: research reads no depth, can
+            # approve nothing, and simulates nothing. Their absence from the output would
+            # be indistinguishable from a run that forgot to count them.
             "order_books_fetched": 0,
-            "auto_approved": 0,
+            "approvals_created": 0,
             "paper_trades": 0,
         }
 

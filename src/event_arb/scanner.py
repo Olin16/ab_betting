@@ -599,6 +599,23 @@ class Scanner:
         async with self._db_lock, self.database.session() as session:
             await VenueMarketRepository(session).upsert_many(self.state.markets.values())
 
+    async def persist_markets_subset(self, markets: Iterable[VenueMarket]) -> int:
+        """Write metadata for a named subset of markets. Returns how many were written.
+
+        Candidate research holds a whole catalogue page in memory but must persist only the
+        legs of the shortlist it kept. Storing the full page would exceed what §3.1 of the
+        Kalshi Developer Agreement permits (data stored to facilitate our own trading), and
+        storing nothing left the dashboard unable to render a persisted candidate at all.
+        """
+        if self.database is None:
+            return 0
+        selected = list(markets)
+        if not selected:
+            return 0
+        async with self._db_lock, self.database.session() as session:
+            await VenueMarketRepository(session).upsert_many(selected)
+        return len(selected)
+
     async def persist_pairs(self) -> None:
         """Write pairs with their approval metadata and rule hashes."""
         if self.database is None:

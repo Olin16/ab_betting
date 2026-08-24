@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import sys
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from event_arb.config import (
 )
 from event_arb.demo_reviews import DemoReviewError
 from event_arb.domain.enums import MatchStatus, Venue
-from event_arb.domain.keys import pair_market_keys
+from event_arb.domain.keys import kalshi_key, market_key, pair_market_keys, polymarket_key
 from event_arb.domain.models import VenueMarket
 from event_arb.matching.approval import ApprovalError
 from event_arb.observability.logging import configure_logging, get_logger
@@ -418,18 +419,23 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
         1 for cursor in (kalshi_cursor, polymarket_cursor) if cursor
     )
 
-    # Targeted re-verification: re-fetch the highest-scoring markets and mark them.
+    # Targeted existence recheck. Deliberately narrow: it asks the venue whether the top
+    # ids still resolve, and records nothing else. The returned metadata is not used, so
+    # this can never be read as having re-validated the candidate itself.
     if limits.verify_top > 0 and report.records:
         slugs = top_slugs_for_verification(report, limits)
         refetched = await scanner.adapters[Venue.POLYMARKET].discover_markets(market_ids=slugs)
         confirmed = {m.venue_market_id for m in refetched}
+        checked_at = datetime.now(UTC)
         for index, record in enumerate(report.records):
             if record.pair.polymarket_market_id in confirmed:
-                report.records[index] = replace(record, verified=True)
-        report.verified = sum(1 for record in report.records if record.verified)
+                report.records[index] = replace(
+                    record, existence_rechecked=True, existence_rechecked_at=checked_at
+                )
+        report.existence_rechecked = sum(1 for r in report.records if r.existence_rechecked)
 
     # Only the capped shortlist is persisted; source catalogues stay in memory.
-    await _persist_shortlist(scanner, report)
+    await _persist_shortlist(scanner, report, kalshi_markets + polymarket_markets)
 
     print("\n--- Research summary ---")
     for key, value in report.as_dict().items():
@@ -438,7 +444,7 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     print(f"\n--- Shortlist ({len(report.records)}) ---")
     for record in sorted(report.records, key=lambda r: r.score, reverse=True):
         state = "READY" if record.readiness.is_ready else "BLOCKED"
-        mark = " [verified]" if record.verified else ""
+        mark = " [id rechecked]" if record.existence_rechecked else ""
         print(f"\n  [{state}]{mark} score={record.score}  pair={record.pair.id[:12]}")
         print(f"    Kalshi     : {record.kalshi_title[:70]}")
         print(f"    Polymarket : {record.polymarket_title[:70]}")
@@ -460,7 +466,9 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
-async def _persist_shortlist(scanner: Scanner, report: object) -> None:
+async def _persist_shortlist(
+    scanner: Scanner, report: object, catalogue: list[VenueMarket]
+) -> None:
     """Store the capped shortlist, and only ever as *new* suggested pairs.
 
     Existence is checked against storage rather than against memory, and pairs that already
@@ -468,12 +476,29 @@ async def _persist_shortlist(scanner: Scanner, report: object) -> None:
     revoke, approve, downgrade, or otherwise alter a disposition a human recorded — the
     write path has no way to express it.
     """
-    stored = await scanner.persist_new_pairs(record.pair for record in report.records)  # type: ignore[attr-defined]
+    records = report.records  # type: ignore[attr-defined]
+
+    # The legs the shortlist actually references, and nothing else. Without these the pair
+    # survives a restart but the dashboard has no titles or rules to show, so it reports
+    # "market metadata missing" for a candidate it is holding.
+    wanted = {
+        key
+        for record in records
+        for key in (
+            kalshi_key(record.pair.kalshi_market_id),
+            polymarket_key(record.pair.polymarket_product, record.pair.polymarket_market_id),
+        )
+    }
+    legs = [market for market in catalogue if market_key(market) in wanted]
+    markets_stored = await scanner.persist_markets_subset(legs)
+
+    stored = await scanner.persist_new_pairs(record.pair for record in records)
     await scanner.audit(
         "candidates-discover",
         "candidates.shortlist_persisted",
         detail={
             "retained": stored,
+            "market_legs_persisted": markets_stored,
             "kalshi_markets_seen": report.kalshi_markets_seen,  # type: ignore[attr-defined]
             "polymarket_markets_seen": report.polymarket_markets_seen,  # type: ignore[attr-defined]
             "parse_failures": report.parse_failures,  # type: ignore[attr-defined]

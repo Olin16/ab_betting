@@ -193,7 +193,7 @@ def test_report_states_it_took_no_trading_actions() -> None:
     )
     payload = report.as_dict()
     assert payload["order_books_fetched"] == 0
-    assert payload["auto_approved"] == 0
+    assert payload["approvals_created"] == 0
     assert payload["paper_trades"] == 0
 
 
@@ -294,24 +294,42 @@ def test_scope_matches_the_documented_initial_test_bounds() -> None:
 # ------------------------------------------------- verification and cursors
 
 
-def test_verified_defaults_to_false_until_re_fetched() -> None:
+def test_existence_recheck_defaults_to_false_until_re_fetched() -> None:
     report = research_candidates(
         [kalshi_market(0)], [us_market(0)], DiscoveryLimits(min_score=Decimal("0"))
     )
-    assert report.records[0].verified is False
-    assert report.verified == 0
+    assert report.records[0].existence_rechecked is False
+    assert report.records[0].existence_rechecked_at is None
+    assert report.existence_rechecked == 0
 
 
-def test_a_record_can_be_marked_verified() -> None:
-    """The CLI sets this after re-fetching; the field is not decorative."""
+def test_a_rechecked_record_states_exactly_what_was_checked() -> None:
+    """It used to be called "verified", which claimed far more than it did."""
     from dataclasses import replace
+    from datetime import UTC, datetime
 
     report = research_candidates(
         [kalshi_market(0)], [us_market(0)], DiscoveryLimits(min_score=Decimal("0"))
     )
-    marked = replace(report.records[0], verified=True)
-    assert marked.verified is True
-    assert marked.as_dict()["targeted_reverify"] is True
+    when = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+    marked = replace(report.records[0], existence_rechecked=True, existence_rechecked_at=when)
+    payload = marked.as_dict()
+
+    assert payload["existence_rechecked"] is True
+    assert payload["existence_rechecked_at"] == when.isoformat()
+    assert payload["existence_recheck_scope"] == (
+        "the venue still returns this market id; no metadata was re-read"
+    )
+    assert "verified" not in payload
+
+
+def test_no_output_field_claims_verification() -> None:
+    """A reviewer must not be able to read "verified" anywhere in this report."""
+    report = research_candidates(
+        [kalshi_market(0)], [us_market(0)], DiscoveryLimits(min_score=Decimal("0"))
+    )
+    assert not any("verif" in key for key in report.as_dict())
+    assert not any("verif" in key for key in report.records[0].as_dict())
 
 
 def test_cursor_count_is_reported_in_the_summary() -> None:

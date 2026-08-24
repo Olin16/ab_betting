@@ -8,6 +8,7 @@ claim nobody has made about the current text. These tests pin that it cannot hap
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -515,3 +516,49 @@ async def test_an_unknown_fee_policy_refuses_to_price_and_says_why(
     )
     with pytest.raises(UnknownFeePolicyError, match="pre-migration row"):
         taker_fee_for(Decimal("100"), Decimal("0.5"), stale)
+
+
+# ------------------------------------------------- timezone fidelity through storage
+
+
+async def test_close_time_keeps_its_timezone_through_storage(database: Database) -> None:
+    """SQLite hands back naive datetimes, and close_time is part of the fingerprint.
+
+    A market read from storage therefore hashed differently from the same market read from
+    the venue, so any comparison between the two reported a rules change that never
+    happened.
+    """
+    from event_arb.domain.enums import VenueProduct
+    from event_arb.domain.keys import market_key
+    from event_arb.domain.models import VenueMarket
+    from event_arb.persistence.repositories import VenueMarketRepository
+    from event_arb.venues.polymarket_us.fees import polymarket_us_fee_config
+
+    close = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
+    market = VenueMarket(
+        venue=Venue.POLYMARKET,
+        venue_market_id="tz-round-trip",
+        title="T",
+        rules_text="r",
+        settlement_source="FOMC statement",
+        product=VenueProduct.POLYMARKET_US,
+        close_time=close,
+        fee_config=polymarket_us_fee_config(),
+    )
+    async with database.session() as session:
+        await VenueMarketRepository(session).upsert(market)
+    async with database.session() as session:
+        restored = (await VenueMarketRepository(session).load_all())[market_key(market)]
+
+    assert restored.close_time is not None
+    assert restored.close_time.tzinfo is not None, "tzinfo was dropped by storage"
+    assert restored.close_time == close
+    assert restored.settlement_fingerprint == market.settlement_fingerprint
+
+
+async def test_storing_a_naive_datetime_is_refused(database: Database) -> None:
+    """Assuming UTC for a naive value is how a close time silently moves by hours."""
+    from event_arb.persistence.models import UtcDateTime
+
+    with pytest.raises(ValueError, match="naive datetime"):
+        UtcDateTime().process_bind_param(datetime(2026, 9, 17, 18, 0), None)  # type: ignore[arg-type]
