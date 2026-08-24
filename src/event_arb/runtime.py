@@ -54,6 +54,8 @@ class TrialStats:
     paper_trades: int = 0
     refreshes: int = 0
     snapshots_pruned: int = 0
+    #: Detections that were observed but not re-announced inside the cooldown window.
+    alerts_suppressed: int = 0
     errors: int = 0
     health_alerts: int = 0
     last_scan_at: datetime | None = None
@@ -69,6 +71,7 @@ class TrialStats:
             "paper_trades": self.paper_trades,
             "refreshes": self.refreshes,
             "snapshots_pruned": self.snapshots_pruned,
+            "alerts_suppressed": self.alerts_suppressed,
             "errors": self.errors,
             "health_alerts": self.health_alerts,
             "last_scan_at": self.last_scan_at.isoformat() if self.last_scan_at else None,
@@ -216,14 +219,33 @@ class TrialRunner:
         result = await self._scanner.scan_and_persist()
         self.stats.scans += 1
         self.stats.last_scan_at = result.scanned_at
-        self.stats.opportunities_detected += len(result.opportunities)
+        # Count what was observed, not what was announced. The cooldown governs alerting;
+        # a stat that tracked it would drift from the persisted evidence over a long run.
+        self.stats.opportunities_detected += len(result.all_detected)
         self.stats.confirmed_detected += len(result.confirmed)
+        self.stats.alerts_suppressed += len(result.alert_suppressed)
 
         for opportunity in result.opportunities:
-            if self._alerts is not None:
-                await self._alerts.dispatch(opportunity)
+            await self._alert(opportunity)
             if self._should_paper_trade(opportunity):
                 await self._paper_trade(opportunity)
+
+    async def _alert(self, opportunity: Opportunity) -> None:
+        """Announce an opportunity. Never let announcing it stop the trial.
+
+        AlertDispatcher already swallows httpx errors, but only those. Anything else — a
+        payload it cannot build, a misconfigured URL — escaped to the cycle loop, which
+        abandoned the rest of the batch. A flaky webhook could therefore stop paper trading,
+        silently converting a notification problem into a hole in the evidence.
+        """
+        if self._alerts is None:
+            return
+        try:
+            await self._alerts.dispatch(opportunity)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._record_error("alert", exc)
 
     def _should_paper_trade(self, opportunity: Opportunity) -> bool:
         trial = self._settings.trial

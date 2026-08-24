@@ -264,3 +264,68 @@ async def test_alert_settings_default_to_withholding_venue_data(
 ) -> None:
     """Automation must not become a route around the third-party data restriction."""
     assert AlertSettings().allow_third_party_market_data is False
+
+
+# ------------------------------------------------- alerting must not gate evidence
+
+
+async def test_a_failing_alert_does_not_stop_paper_trading(
+    fixture_dir: Path, database: Database
+) -> None:
+    """A notification problem must not become a hole in the trial's evidence.
+
+    AlertDispatcher swallows httpx errors but only those. Anything else escaped to the
+    cycle loop, which abandoned the rest of the batch — so a flaky webhook silently stopped
+    paper trades for that cycle.
+    """
+    from event_arb.alerts import AlertDispatcher
+
+    scanner = await prepared(make_settings(fixture_dir), database)
+    await scanner.refresh_books()
+    settings = scanner.settings.model_copy(
+        update={"trial": scanner.settings.trial.model_copy(update={"auto_paper_trade": True})}
+    )
+
+    class ExplodingAlerts(AlertDispatcher):
+        def __init__(self) -> None:
+            super().__init__(settings.alerts)
+            self.attempts = 0
+
+        async def dispatch(self, opportunity: object) -> None:  # type: ignore[override]
+            self.attempts += 1
+            raise ValueError("webhook payload could not be built")
+
+    alerts = ExplodingAlerts()
+    runner = TrialRunner(scanner, settings, alerts=alerts, use_websockets=False)
+
+    before = len(scanner.state.paper_trades)
+    await runner._scan_once()
+
+    assert alerts.attempts > 0, "the alert path must actually have been exercised"
+    assert len(scanner.state.paper_trades) > before, "paper trading was skipped"
+    assert runner.stats.errors > 0, "the failure must be recorded, not swallowed silently"
+    assert "alert" in (runner.stats.last_error or "")
+
+
+async def test_stats_count_observed_detections_not_announcements(
+    fixture_dir: Path, database: Database
+) -> None:
+    """Counting announcements would drift from the persisted evidence over a long run."""
+    # The shared helper sets alert_cooldown_seconds=0; this test is about the cooldown, so
+    # it needs a real window.
+    base = make_settings(fixture_dir)
+    settings = base.model_copy(
+        update={"opportunity": base.opportunity.model_copy(update={"alert_cooldown_seconds": 300})}
+    )
+    scanner = await prepared(settings, database)
+    await scanner.refresh_books()
+    runner = TrialRunner(scanner, settings, use_websockets=False)
+
+    await runner._scan_once()
+    first = runner.stats.opportunities_detected
+    assert first > 0
+
+    # Same books, inside the cooldown: nothing new is announced, but it is still observed.
+    await runner._scan_once()
+    assert runner.stats.opportunities_detected > first
+    assert runner.stats.alerts_suppressed > 0
