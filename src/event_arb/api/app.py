@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from event_arb.alerts import AlertDispatcher
 from event_arb.config import IngestionMode, Settings, get_settings
 from event_arb.domain.enums import Venue
+from event_arb.domain.models import ReviewedSource
 from event_arb.matching.readiness import assess_readiness
 from event_arb.matching.rules_diff import compare_rules
 from event_arb.observability import metrics
@@ -35,6 +36,21 @@ __all__ = ["create_app"]
 
 log = get_logger(__name__)
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _reviewed_source(raw: Any, recorded_by: str) -> ReviewedSource | None:
+    """Build a reviewed source from a request body, or None when absent.
+
+    Requires both the authority id and the evidence establishing it; a bare name with no
+    evidence is an assertion, not a verification.
+    """
+    if not isinstance(raw, dict):
+        return None
+    canonical = str(raw.get("canonical_id", "")).strip()
+    evidence = str(raw.get("evidence", "")).strip()
+    if not canonical:
+        return None
+    return ReviewedSource(canonical_id=canonical, evidence=evidence, recorded_by=recorded_by)
 
 
 def _require_auth(config: Settings) -> Callable[[Request], None]:
@@ -278,15 +294,20 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         if pair_id not in runtime.state.pairs:
             raise HTTPException(status_code=404, detail="pair not found")
         try:
-            # No generic material-difference override: a contradictory pair cannot be
-            # acknowledged into equivalence. A reviewer may supply an authoritative
-            # settlement source obtained outside the API, per leg.
+            # No override exists: a contradictory pair cannot be acknowledged into
+            # equivalence. A reviewer may record the resolution authority they verified
+            # for a leg whose venue publishes none — but both legs must resolve to the
+            # same authority, which readiness enforces.
             pair = await runtime.approve_and_persist(
                 pair_id,
                 approved_by,
                 str(payload.get("reviewer_notes", "")),
-                kalshi_source_override=str(payload.get("kalshi_settlement_source", "")),
-                polymarket_source_override=str(payload.get("polymarket_settlement_source", "")),
+                kalshi_reviewed_source=_reviewed_source(
+                    payload.get("kalshi_reviewed_source"), approved_by
+                ),
+                polymarket_reviewed_source=_reviewed_source(
+                    payload.get("polymarket_reviewed_source"), approved_by
+                ),
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

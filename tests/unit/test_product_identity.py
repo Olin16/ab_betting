@@ -61,8 +61,12 @@ def test_settlement_deadline_is_part_of_the_fingerprint() -> None:
 
 
 def test_fingerprint_version_bumped_to_invalidate_older_approvals() -> None:
-    """Approvals granted under a weaker fingerprint must be re-reviewed."""
-    assert SETTLEMENT_FINGERPRINT_VERSION == "v3"
+    """Approvals granted under a weaker fingerprint must be re-reviewed.
+
+    v4 added the reviewed settlement authority, so approvals made when the authority was
+    unrecorded no longer validate.
+    """
+    assert SETTLEMENT_FINGERPRINT_VERSION == "v4"
 
 
 # ------------------------------------------------------------------------ restore
@@ -83,6 +87,7 @@ def kalshi_market() -> VenueMarket:
 
 
 def approved_pair(product: VenueProduct, fingerprint: str) -> MarketPair:
+    """``fingerprint`` must be a source-aware fingerprint, as approval stores."""
     return MarketPair(
         id="p1",
         kalshi_market_id="K",
@@ -90,7 +95,7 @@ def approved_pair(product: VenueProduct, fingerprint: str) -> MarketPair:
         polymarket_product=product,
         status=MatchStatus.APPROVED,
         manually_approved=True,
-        kalshi_rules_hash_at_approval=kalshi_market().settlement_fingerprint,
+        kalshi_rules_hash_at_approval=kalshi_market().fingerprint_with_source(""),
         polymarket_rules_hash_at_approval=fingerprint,
     )
 
@@ -115,7 +120,9 @@ def test_a_global_approval_cannot_satisfy_a_us_pair() -> None:
 
 def test_a_matching_product_restores_normally() -> None:
     us_market = market(VenueProduct.POLYMARKET_US)
-    pair = approved_pair(VenueProduct.POLYMARKET_US, us_market.settlement_fingerprint)
+    pair = approved_pair(
+        VenueProduct.POLYMARKET_US, us_market.fingerprint_with_source("fomc statement")
+    )
     markets = {
         (Venue.KALSHI, "K"): kalshi_market(),
         (Venue.POLYMARKET, "SAME-ID"): us_market,

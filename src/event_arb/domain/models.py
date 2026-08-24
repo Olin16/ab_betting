@@ -39,6 +39,7 @@ __all__ = [
     "Opportunity",
     "OrderBook",
     "OrderBookSide",
+    "ReviewedSource",
     "RuleDifference",
     "VenueMarket",
     "rules_hash",
@@ -56,7 +57,7 @@ def _utcnow() -> datetime:
 #: Bump when the set of fields below changes. A bump invalidates every stored approval,
 #: forcing re-review — which is the point: an old approval was granted against a weaker
 #: definition of "unchanged".
-SETTLEMENT_FINGERPRINT_VERSION = "v3"
+SETTLEMENT_FINGERPRINT_VERSION = "v4"
 
 
 def rules_hash(*parts: str | None) -> str:
@@ -152,6 +153,16 @@ class VenueMarket(_Frozen):
     raw_metadata: dict[str, object] = Field(default_factory=dict)
     last_updated: datetime = Field(default_factory=_utcnow)
 
+    def fingerprint_with_source(self, reviewed_source: str | None = None) -> str:
+        """Fingerprint incorporating a reviewer-verified authority.
+
+        When a venue publishes no settlement source, the authority a reviewer verified is
+        what the approval actually rests on — so it belongs in the hash. If that recorded
+        authority later changes or goes missing, the hash moves and the approval suspends,
+        which is the same protection published rules already get.
+        """
+        return rules_hash(self.settlement_fingerprint, reviewed_source or "")
+
     @property
     def settlement_fingerprint(self) -> str:
         """Versioned hash of every field a human weighs when judging equivalence.
@@ -190,6 +201,43 @@ class VenueMarket(_Frozen):
         return self.settlement_fingerprint
 
 
+class ReviewedSource(_Frozen):
+    """A resolution authority a reviewer verified for one leg.
+
+    ``canonical_id`` is the *identity* of the authority, normalized so that "NWS" and
+    "National Weather Service" compare equal. ``evidence`` is how the reviewer established
+    it — a URL, a rulebook section, a support-ticket reference.
+
+    Both legs must resolve to the **same** canonical id. There is deliberately no
+    justification field that would let a reviewer explain away two different authorities:
+    two authorities can publish different values for the same event, so that pair is not
+    settlement-equivalent and no amount of explanation makes it so.
+    """
+
+    canonical_id: str
+    evidence: str
+    recorded_by: str
+    recorded_at: datetime = Field(default_factory=_utcnow)
+
+    @field_validator("canonical_id")
+    @classmethod
+    def _normalized(cls, value: str) -> str:
+        collapsed = " ".join(value.split()).lower()
+        if not collapsed:
+            raise ValueError("canonical source id cannot be empty")
+        return collapsed
+
+    @field_validator("evidence")
+    @classmethod
+    def _evidence_present(cls, value: str) -> str:
+        if len(value.strip()) < 10:
+            raise ValueError(
+                "source evidence must say how the authority was established "
+                "(at least 10 characters)"
+            )
+        return value.strip()
+
+
 class RuleDifference(_Frozen):
     """One structured difference between two venues' contract rules."""
 
@@ -215,6 +263,10 @@ class MarketPair(_Frozen):
     #: Which Polymarket product this pair's second leg refers to. Conservative default:
     #: pairs predating product identity are Global.
     polymarket_product: VenueProduct = VenueProduct.POLYMARKET_GLOBAL
+    #: Reviewer-verified resolution authority per leg, when the venue publishes none.
+    #: Recorded so the claim survives restart and can be re-verified.
+    kalshi_reviewed_source: ReviewedSource | None = None
+    polymarket_reviewed_source: ReviewedSource | None = None
     kalshi_rules_hash_at_approval: str | None = None
     polymarket_rules_hash_at_approval: str | None = None
     approved_at: datetime | None = None

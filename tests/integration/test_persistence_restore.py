@@ -164,7 +164,9 @@ async def test_missing_market_metadata_suspends_rather_than_trusts(
     empty = Database("sqlite+aiosqlite:///:memory:")
     await empty.create_all()
     async with empty.session() as session:
-        from event_arb.persistence.repositories import MarketPairRepository
+        from event_arb.persistence.repositories import (
+            MarketPairRepository,
+        )
 
         await MarketPairRepository(session).save(first.state.pairs[pair_id])
 
@@ -342,3 +344,88 @@ async def test_partial_discovery_suspends_the_approval(
     assert second.state.pairs[pair_id].is_tradable_pair is False
     assert second.last_restore is not None
     assert "Polymarket" in second.last_restore.suspended[0][1]
+
+
+# ------------------------------- reviewed settlement sources survive a restart
+
+
+async def test_reviewed_sources_survive_a_restart_and_stay_verifiable(
+    fixture_dir: Path, database: Database
+) -> None:
+    """An approval that rests on a reviewed authority must keep that evidence.
+
+    Without it the claim cannot be re-checked after restart, and an unverifiable claim is
+    indistinguishable from an unmade one.
+    """
+    from event_arb.domain.models import ReviewedSource
+
+    settings = make_settings(fixture_dir)
+    first = await boot(settings, database)
+    await first.persist_markets()
+    pair_id = next(iter(first.state.pairs))
+
+    fed = ReviewedSource(
+        canonical_id="Federal Reserve",
+        evidence="Verified against the FOMC press-release page on 2026-08-24",
+        recorded_by="reviewer@example.com",
+    )
+    await first.approve_and_persist(
+        pair_id,
+        approved_by="reviewer@example.com",
+        kalshi_reviewed_source=fed,
+        polymarket_reviewed_source=fed,
+    )
+
+    second = Scanner(settings, database=database)
+    await second.discover()
+    await second.restore()
+    restored = second.state.pairs[pair_id]
+
+    assert restored.kalshi_reviewed_source is not None
+    assert restored.kalshi_reviewed_source.canonical_id == "federal reserve"
+    assert "FOMC press-release" in restored.kalshi_reviewed_source.evidence
+    assert restored.polymarket_reviewed_source is not None
+
+
+async def test_a_reviewed_source_lost_in_storage_suspends_on_restart(
+    fixture_dir: Path, database: Database
+) -> None:
+    from event_arb.domain.models import ReviewedSource
+    from event_arb.persistence.repositories import (
+        MarketPairRepository,
+        VenueMarketRepository,
+    )
+
+    settings = make_settings(fixture_dir)
+    first = await boot(settings, database)
+    await first.persist_markets()
+    pair_id = next(iter(first.state.pairs))
+    fed = ReviewedSource(
+        canonical_id="Federal Reserve",
+        evidence="Verified against the FOMC press-release page on 2026-08-24",
+        recorded_by="reviewer@example.com",
+    )
+    await first.approve_and_persist(
+        pair_id,
+        approved_by="reviewer@example.com",
+        kalshi_reviewed_source=fed,
+        polymarket_reviewed_source=fed,
+    )
+
+    # Make the reviewed source load-bearing: with no published source, the approval rests
+    # on the reviewer's evidence alone. Then simulate that evidence going missing.
+    async with database.session() as session:
+        markets = VenueMarketRepository(session)
+        stored_markets = await markets.load_all()
+        kalshi_market = stored_markets[(Venue.KALSHI, KALSHI_FED)]
+        await markets.upsert(kalshi_market.model_copy(update={"settlement_source": ""}))
+
+        pairs = MarketPairRepository(session)
+        stored_pair = (await pairs.load_all())[pair_id]
+        await pairs.save(stored_pair.model_copy(update={"kalshi_reviewed_source": None}))
+
+    # Restore without rediscovery so the blanked stored metadata is what is checked.
+    second = Scanner(settings, database=database)
+    second.state.observed_markets.update({(Venue.KALSHI, KALSHI_FED), (Venue.POLYMARKET, POLY_FED)})
+    await second.restore()
+    assert second.state.pairs[pair_id].is_tradable_pair is False

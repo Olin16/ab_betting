@@ -45,6 +45,8 @@ class ReadinessBlocker(StrEnum):
     POLYMARKET_RULES_INSUFFICIENT = "polymarket_rules_insufficient"
     KALSHI_SETTLEMENT_SOURCE_UNKNOWN = "kalshi_settlement_source_unknown"
     POLYMARKET_SETTLEMENT_SOURCE_UNKNOWN = "polymarket_settlement_source_unknown"
+    #: Both authorities are known but they are *different*. Unapprovable, research-only.
+    SETTLEMENT_AUTHORITIES_DIFFER = "settlement_authorities_differ"
     PRODUCT_IDENTITY_MISSING = "product_identity_missing"
     PRODUCT_IDENTITY_MISMATCHED = "product_identity_mismatched"
     OUTCOME_IDENTITY_UNRESOLVED = "outcome_identity_unresolved"
@@ -95,6 +97,28 @@ class ReadinessReport:
         }
 
 
+def canonical_source(text: str) -> str:
+    """Normalize an authority name so wording differences do not read as disagreement."""
+    return " ".join((text or "").split()).lower()
+
+
+def effective_sources(
+    pair: MarketPair, kalshi: VenueMarket, polymarket: VenueMarket
+) -> tuple[str, str]:
+    """The authority each leg actually settles against.
+
+    A venue-published source wins; otherwise the reviewer-verified one is used. Returns
+    canonical (comparable) ids, empty when neither exists.
+    """
+    kalshi_source = canonical_source(kalshi.settlement_source) or (
+        pair.kalshi_reviewed_source.canonical_id if pair.kalshi_reviewed_source else ""
+    )
+    polymarket_source = canonical_source(polymarket.settlement_source) or (
+        pair.polymarket_reviewed_source.canonical_id if pair.polymarket_reviewed_source else ""
+    )
+    return kalshi_source, polymarket_source
+
+
 def _rules_are_authoritative(text: str) -> bool:
     stripped = (text or "").strip()
     if len(stripped) < MIN_AUTHORITATIVE_RULES_CHARS:
@@ -108,16 +132,14 @@ def assess_readiness(
     kalshi: VenueMarket,
     polymarket: VenueMarket,
     differences: tuple[RuleDifference, ...] | None = None,
-    kalshi_source_override: str = "",
-    polymarket_source_override: str = "",
     settlement_deadline_required: bool = False,
 ) -> ReadinessReport:
     """Decide whether a pair may be approved, and record why not.
 
-    ``*_source_override`` lets a reviewer record an authoritative resolution source they
-    obtained separately, for venues that publish none. It must be supplied **per leg**:
-    two unknown sources are not agreement, they are two unknowns, and treating them as a
-    match is the specific failure this function exists to prevent.
+    Settlement authority is taken from the venue when published, else from the reviewer's
+    recorded :class:`~event_arb.domain.models.ReviewedSource` on the pair. Two unknowns are
+    not agreement; neither are two *different* known authorities. Both must resolve to the
+    same canonical id, and there is no override that accepts otherwise.
     """
     blockers: list[tuple[ReadinessBlocker, str]] = []
     missing: list[str] = []
@@ -141,14 +163,13 @@ def assess_readiness(
         )
 
     # --- authoritative settlement source --------------------------------------
-    kalshi_source = (kalshi.settlement_source or kalshi_source_override).strip()
-    polymarket_source = (polymarket.settlement_source or polymarket_source_override).strip()
+    kalshi_source, polymarket_source = effective_sources(pair, kalshi, polymarket)
     if not kalshi_source:
         blockers.append(
             (
                 ReadinessBlocker.KALSHI_SETTLEMENT_SOURCE_UNKNOWN,
-                "Kalshi publishes no settlement source; a reviewer must record one "
-                "obtained separately",
+                "Kalshi publishes no settlement source and no reviewed source is "
+                "recorded on the pair",
             )
         )
         missing.append("kalshi settlement source")
@@ -156,11 +177,22 @@ def assess_readiness(
         blockers.append(
             (
                 ReadinessBlocker.POLYMARKET_SETTLEMENT_SOURCE_UNKNOWN,
-                "Polymarket publishes no settlement source; a reviewer must record one "
-                "obtained separately",
+                "Polymarket publishes no settlement source and no reviewed source is "
+                "recorded on the pair",
             )
         )
         missing.append("polymarket settlement source")
+
+    if kalshi_source and polymarket_source and kalshi_source != polymarket_source:
+        # Different authorities can publish different values for the same event, so the
+        # legs are not equivalent. No justification changes that, so there is no override.
+        blockers.append(
+            (
+                ReadinessBlocker.SETTLEMENT_AUTHORITIES_DIFFER,
+                f"legs settle against different authorities ({kalshi_source!r} vs "
+                f"{polymarket_source!r}); this pair is research-only",
+            )
+        )
 
     # --- product identity ------------------------------------------------------
     if polymarket.product is VenueProduct.NONE:

@@ -30,6 +30,7 @@ from event_arb.domain.models import (
     MarketPair,
     Opportunity,
     OrderBook,
+    ReviewedSource,
     RuleDifference,
     VenueMarket,
 )
@@ -171,6 +172,16 @@ class MarketPairRepository:
         row.rule_differences = {
             "differences": [d.model_dump(mode="json") for d in pair.rule_differences]
         }
+        row.kalshi_reviewed_source = (
+            _json_safe(pair.kalshi_reviewed_source.model_dump(mode="json"))
+            if pair.kalshi_reviewed_source
+            else None
+        )
+        row.polymarket_reviewed_source = (
+            _json_safe(pair.polymarket_reviewed_source.model_dump(mode="json"))
+            if pair.polymarket_reviewed_source
+            else None
+        )
         row.kalshi_rules_hash_at_approval = pair.kalshi_rules_hash_at_approval
         row.polymarket_rules_hash_at_approval = pair.polymarket_rules_hash_at_approval
         row.approved_at = pair.approved_at
@@ -200,6 +211,14 @@ class MarketPairRepository:
             manually_approved=row.manually_approved,
             reviewer_notes=row.reviewer_notes,
             rule_differences=tuple(RuleDifference(**e) for e in entries),
+            kalshi_reviewed_source=(
+                ReviewedSource(**row.kalshi_reviewed_source) if row.kalshi_reviewed_source else None
+            ),
+            polymarket_reviewed_source=(
+                ReviewedSource(**row.polymarket_reviewed_source)
+                if row.polymarket_reviewed_source
+                else None
+            ),
             kalshi_rules_hash_at_approval=row.kalshi_rules_hash_at_approval,
             polymarket_rules_hash_at_approval=row.polymarket_rules_hash_at_approval,
             approved_at=row.approved_at,

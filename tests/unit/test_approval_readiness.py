@@ -12,7 +12,13 @@ from decimal import Decimal
 import pytest
 
 from event_arb.domain.enums import FeePolicy, MatchStatus, Venue, VenueProduct
-from event_arb.domain.models import FeeConfig, MarketPair, RuleDifference, VenueMarket
+from event_arb.domain.models import (
+    FeeConfig,
+    MarketPair,
+    ReviewedSource,
+    RuleDifference,
+    VenueMarket,
+)
 from event_arb.matching.approval import ApprovalError, approve_pair, record_expert_review
 from event_arb.matching.readiness import ReadinessBlocker, assess_readiness
 
@@ -121,27 +127,39 @@ def test_empty_sources_block_approval_outright() -> None:
         )
 
 
-def test_a_reviewer_may_record_sources_obtained_separately() -> None:
+def test_a_reviewer_may_record_a_verified_authority_per_leg() -> None:
+    """Both legs resolve to the same authority, so approval proceeds."""
+    fed = ReviewedSource(
+        canonical_id="Federal Reserve",
+        evidence="Checked the FOMC press-release page manually on 2026-08-24",
+        recorded_by="analyst",
+    )
     approved = approve_pair(
         pair(),
         kalshi(settlement_source=""),
         polymarket(settlement_source=""),
         approved_by="analyst",
-        kalshi_source_override="Federal Reserve press release, checked manually",
-        polymarket_source_override="Federal Reserve press release, checked manually",
+        kalshi_reviewed_source=fed,
+        polymarket_reviewed_source=fed,
     )
     assert approved.is_tradable_pair is True
+    assert approved.kalshi_reviewed_source is not None
+    assert approved.kalshi_reviewed_source.canonical_id == "federal reserve"
 
 
-def test_an_override_for_one_leg_only_is_not_enough() -> None:
-    """Per leg, because one known source and one unknown is still an unknown."""
+def test_a_reviewed_source_for_one_leg_only_is_not_enough() -> None:
+    """Per leg, because one known authority and one unknown is still an unknown."""
     with pytest.raises(ApprovalError, match="polymarket_settlement_source_unknown"):
         approve_pair(
             pair(),
             kalshi(settlement_source=""),
             polymarket(settlement_source=""),
             approved_by="analyst",
-            kalshi_source_override="checked manually",
+            kalshi_reviewed_source=ReviewedSource(
+                canonical_id="Federal Reserve",
+                evidence="Checked the FOMC press-release page manually",
+                recorded_by="analyst",
+            ),
         )
 
 
@@ -271,3 +289,106 @@ def test_readiness_report_serializes_for_the_dashboard() -> None:
     assert payload["ready_for_approval"] is False
     assert isinstance(payload["blockers"], list)
     assert payload["missing_information"] == ["kalshi settlement source"]
+
+
+# ------------------------------- canonical settlement authority (F1 acceptance)
+
+
+def source(name: str) -> ReviewedSource:
+    return ReviewedSource(
+        canonical_id=name,
+        evidence=f"Verified {name} against its published rulebook on 2026-08-24",
+        recorded_by="analyst",
+    )
+
+
+def test_two_different_verified_authorities_are_refused() -> None:
+    """The hole this replaced: NWS vs NOAA used to pass because both were non-empty.
+
+    Two authorities can publish different values for the same event, so the legs are not
+    equivalent. There is deliberately no justification field that accepts this.
+    """
+    with pytest.raises(ApprovalError, match="settlement_authorities_differ"):
+        approve_pair(
+            pair(),
+            kalshi(settlement_source=""),
+            polymarket(settlement_source=""),
+            approved_by="analyst",
+            kalshi_reviewed_source=source("National Weather Service"),
+            polymarket_reviewed_source=source("NOAA"),
+        )
+
+
+def test_differing_published_authorities_are_also_refused() -> None:
+    """Same rule whether the authority was published or reviewed."""
+    report = assess_readiness(
+        pair(),
+        kalshi(settlement_source="National Weather Service"),
+        polymarket(settlement_source="NOAA"),
+    )
+    assert ReadinessBlocker.SETTLEMENT_AUTHORITIES_DIFFER in blockers(report)
+
+
+def test_authority_comparison_ignores_wording_and_case() -> None:
+    """'Federal Reserve' and 'federal   reserve' are one authority, not two."""
+    approved = approve_pair(
+        pair(),
+        kalshi(settlement_source=""),
+        polymarket(settlement_source=""),
+        approved_by="analyst",
+        kalshi_reviewed_source=source("Federal Reserve"),
+        polymarket_reviewed_source=source("federal   reserve"),
+    )
+    assert approved.is_tradable_pair is True
+
+
+def test_a_reviewed_source_requires_supporting_evidence() -> None:
+    """A bare name is an assertion; evidence is what makes it a verification."""
+    with pytest.raises(ValueError, match="evidence"):
+        ReviewedSource(canonical_id="Federal Reserve", evidence="", recorded_by="analyst")
+
+
+def test_reviewed_source_is_in_the_settlement_fingerprint() -> None:
+    market = kalshi(settlement_source="")
+    assert market.fingerprint_with_source("federal reserve") != market.fingerprint_with_source(
+        "some other authority"
+    )
+    assert market.fingerprint_with_source("federal reserve") != market.settlement_fingerprint
+
+
+def test_changing_the_reviewed_source_suspends_the_approval() -> None:
+    """A source change must invalidate an approval exactly as a rules change does."""
+    from event_arb.matching.approval import enforce_rules_integrity
+
+    k, p = kalshi(settlement_source=""), polymarket(settlement_source="")
+    approved = approve_pair(
+        pair(),
+        k,
+        p,
+        approved_by="analyst",
+        kalshi_reviewed_source=source("Federal Reserve"),
+        polymarket_reviewed_source=source("Federal Reserve"),
+    )
+    assert approved.is_tradable_pair is True
+
+    swapped = approved.model_copy(
+        update={"kalshi_reviewed_source": source("A Different Authority")}
+    )
+    assert enforce_rules_integrity(swapped, k, p).is_tradable_pair is False
+
+
+def test_losing_the_reviewed_source_suspends_the_approval() -> None:
+    """Missing evidence after restart is not the same as still-verified."""
+    from event_arb.matching.approval import enforce_rules_integrity
+
+    k, p = kalshi(settlement_source=""), polymarket(settlement_source="")
+    approved = approve_pair(
+        pair(),
+        k,
+        p,
+        approved_by="analyst",
+        kalshi_reviewed_source=source("Federal Reserve"),
+        polymarket_reviewed_source=source("Federal Reserve"),
+    )
+    stripped = approved.model_copy(update={"kalshi_reviewed_source": None})
+    assert enforce_rules_integrity(stripped, k, p).is_tradable_pair is False

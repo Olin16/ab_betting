@@ -107,8 +107,13 @@ def approved_pair(rules: str = "shared rules") -> MarketPair:
         polymarket_market_id="P1",
         status=MatchStatus.APPROVED,
         manually_approved=True,
-        kalshi_rules_hash_at_approval=market_map[(Venue.KALSHI, "K1")].rules_hash,
-        polymarket_rules_hash_at_approval=market_map[(Venue.POLYMARKET, "P1")].rules_hash,
+        # Approval stores a source-aware fingerprint, so the test must build the same one.
+        kalshi_rules_hash_at_approval=market_map[(Venue.KALSHI, "K1")].fingerprint_with_source(
+            market_map[(Venue.KALSHI, "K1")].settlement_source.lower()
+        ),
+        polymarket_rules_hash_at_approval=market_map[
+            (Venue.POLYMARKET, "P1")
+        ].fingerprint_with_source(market_map[(Venue.POLYMARKET, "P1")].settlement_source.lower()),
     )
 
 

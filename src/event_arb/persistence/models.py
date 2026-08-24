@@ -119,6 +119,10 @@ class MarketPairRow(Base):
     outcomes_inverted: Mapped[bool] = mapped_column(Boolean, default=False)
     reviewer_notes: Mapped[str] = mapped_column(Text, default="")
     rule_differences: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: Reviewer-verified resolution authority per leg, stored so the approval can be
+    #: re-verified after restart rather than resting on a claim nobody kept.
+    kalshi_reviewed_source: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    polymarket_reviewed_source: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     kalshi_rules_hash_at_approval: Mapped[str | None] = mapped_column(String(64))
     polymarket_rules_hash_at_approval: Mapped[str | None] = mapped_column(String(64))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

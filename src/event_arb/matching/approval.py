@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from event_arb.domain.enums import MatchStatus
-from event_arb.domain.models import MarketPair, VenueMarket
-from event_arb.matching.readiness import assess_readiness
+from event_arb.domain.models import MarketPair, ReviewedSource, VenueMarket
+from event_arb.matching.readiness import assess_readiness, effective_sources
 from event_arb.observability.logging import get_logger
 
 __all__ = [
@@ -55,8 +55,8 @@ def approve_pair(
     polymarket_market: VenueMarket,
     approved_by: str,
     reviewer_notes: str = "",
-    kalshi_source_override: str = "",
-    polymarket_source_override: str = "",
+    kalshi_reviewed_source: ReviewedSource | None = None,
+    polymarket_reviewed_source: ReviewedSource | None = None,
     settlement_deadline_required: bool = False,
 ) -> MarketPair:
     """Approve a pair as settlement-equivalent.
@@ -71,35 +71,52 @@ def approve_pair(
     a false statement. Genuine exceptions go through :func:`record_expert_review`, which is
     separately named, separately audited, and never produces a confirmed arbitrage label.
 
-    ``*_source_override`` records an authoritative source obtained outside the API, per
-    leg. Two unknown sources are two unknowns, not agreement.
+    ``*_reviewed_source`` records the resolution authority a reviewer verified for a leg
+    whose venue publishes none. Both legs must resolve to the **same** canonical authority;
+    two unknowns are not agreement, and neither are two different known authorities. The
+    reviewed source is stored on the pair and folded into the settlement fingerprint, so a
+    later change to it suspends the approval exactly as a rules change would.
     """
     if not approved_by.strip():
         raise ApprovalError("approval requires an identified reviewer")
     if pair.status is MatchStatus.REJECTED:
         raise ApprovalError("a rejected pair must be re-opened for review before approval")
 
+    # The reviewed sources go onto the pair *before* assessment, so readiness judges the
+    # pair as it will be stored rather than as it arrived.
+    candidate = pair.model_copy(
+        update={
+            "kalshi_reviewed_source": kalshi_reviewed_source or pair.kalshi_reviewed_source,
+            "polymarket_reviewed_source": (
+                polymarket_reviewed_source or pair.polymarket_reviewed_source
+            ),
+        }
+    )
     readiness = assess_readiness(
-        pair,
+        candidate,
         kalshi_market,
         polymarket_market,
-        kalshi_source_override=kalshi_source_override,
-        polymarket_source_override=polymarket_source_override,
         settlement_deadline_required=settlement_deadline_required,
     )
     if not readiness.is_ready:
         detail = "; ".join(f"{code.value}: {reason}" for code, reason in readiness.blockers)
         raise ApprovalError(f"pair is not ready for approval — {detail}")
 
-    approved = pair.model_copy(
+    kalshi_source, polymarket_source = effective_sources(
+        candidate, kalshi_market, polymarket_market
+    )
+    approved = candidate.model_copy(
         update={
             "status": MatchStatus.APPROVED,
             "manually_approved": True,
             "approved_by": approved_by,
             "approved_at": datetime.now(UTC),
             "reviewer_notes": reviewer_notes or pair.reviewer_notes,
-            "kalshi_rules_hash_at_approval": kalshi_market.rules_hash,
-            "polymarket_rules_hash_at_approval": polymarket_market.rules_hash,
+            # The hash covers the authority the approval actually rests on.
+            "kalshi_rules_hash_at_approval": kalshi_market.fingerprint_with_source(kalshi_source),
+            "polymarket_rules_hash_at_approval": polymarket_market.fingerprint_with_source(
+                polymarket_source
+            ),
         }
     )
     log.info("pair.approved", pair_id=pair.id, approved_by=approved_by)
@@ -182,13 +199,16 @@ def check_for_rules_change(
     if not pair.manually_approved:
         return RulesChangeCheck(False, False, False, "pair is not approved")
 
+    kalshi_source, polymarket_source = effective_sources(pair, kalshi_market, polymarket_market)
     kalshi_changed = (
         pair.kalshi_rules_hash_at_approval is not None
-        and pair.kalshi_rules_hash_at_approval != kalshi_market.rules_hash
+        and pair.kalshi_rules_hash_at_approval
+        != kalshi_market.fingerprint_with_source(kalshi_source)
     )
     polymarket_changed = (
         pair.polymarket_rules_hash_at_approval is not None
-        and pair.polymarket_rules_hash_at_approval != polymarket_market.rules_hash
+        and pair.polymarket_rules_hash_at_approval
+        != polymarket_market.fingerprint_with_source(polymarket_source)
     )
 
     changed_venues = [

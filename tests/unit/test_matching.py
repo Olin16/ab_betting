@@ -282,8 +282,13 @@ def test_contradictory_differences_cannot_be_acknowledged_away() -> None:
 def test_approval_records_rules_hashes_and_label() -> None:
     k, p = market(Venue.KALSHI, "K", "T"), market(Venue.POLYMARKET, "P", "T")
     approved = approve_pair(_pair(), k, p, approved_by="analyst")
-    assert approved.kalshi_rules_hash_at_approval == k.rules_hash
-    assert approved.polymarket_rules_hash_at_approval == p.rules_hash
+    # The stored hash folds in the settlement authority the approval rests on.
+    assert approved.kalshi_rules_hash_at_approval == k.fingerprint_with_source(
+        k.settlement_source.lower()
+    )
+    assert approved.polymarket_rules_hash_at_approval == p.fingerprint_with_source(
+        p.settlement_source.lower()
+    )
     assert approved.label is OpportunityLabel.CONFIRMED
     assert approved.approved_at is not None
 

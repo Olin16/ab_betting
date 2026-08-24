@@ -14,7 +14,13 @@ from decimal import Decimal
 
 from event_arb.config import DataSource, PolymarketProduct, Settings
 from event_arb.domain.enums import MatchStatus, Venue, VenueProduct
-from event_arb.domain.models import MarketPair, Opportunity, OrderBook, VenueMarket
+from event_arb.domain.models import (
+    MarketPair,
+    Opportunity,
+    OrderBook,
+    ReviewedSource,
+    VenueMarket,
+)
 from event_arb.matching.approval import approve_pair
 from event_arb.matching.candidates import generate_candidates, pair_id_for
 from event_arb.observability.health import HealthReport, build_health_report
@@ -326,8 +332,8 @@ class Scanner:
         pair_id: str,
         approved_by: str,
         reviewer_notes: str = "",
-        kalshi_source_override: str = "",
-        polymarket_source_override: str = "",
+        kalshi_reviewed_source: ReviewedSource | None = None,
+        polymarket_reviewed_source: ReviewedSource | None = None,
     ) -> MarketPair:
         """Approve a pair. This is the only route to a 'confirmed' opportunity.
 
@@ -347,8 +353,8 @@ class Scanner:
             polymarket,
             approved_by,
             reviewer_notes,
-            kalshi_source_override=kalshi_source_override,
-            polymarket_source_override=polymarket_source_override,
+            kalshi_reviewed_source=kalshi_reviewed_source,
+            polymarket_reviewed_source=polymarket_reviewed_source,
         )
         self.state.pairs[pair_id] = approved
         return approved
@@ -358,16 +364,16 @@ class Scanner:
         pair_id: str,
         approved_by: str,
         reviewer_notes: str = "",
-        kalshi_source_override: str = "",
-        polymarket_source_override: str = "",
+        kalshi_reviewed_source: ReviewedSource | None = None,
+        polymarket_reviewed_source: ReviewedSource | None = None,
     ) -> MarketPair:
         """Approve a pair and durably record the approval and its rule hashes."""
         approved = self.approve(
             pair_id,
             approved_by,
             reviewer_notes,
-            kalshi_source_override=kalshi_source_override,
-            polymarket_source_override=polymarket_source_override,
+            kalshi_reviewed_source=kalshi_reviewed_source,
+            polymarket_reviewed_source=polymarket_reviewed_source,
         )
         await self.persist_pairs()
         await self.audit(
@@ -379,8 +385,12 @@ class Scanner:
                 "polymarket_market_id": approved.polymarket_market_id,
                 "kalshi_rules_hash": approved.kalshi_rules_hash_at_approval,
                 "polymarket_rules_hash": approved.polymarket_rules_hash_at_approval,
-                "kalshi_source_override": kalshi_source_override or None,
-                "polymarket_source_override": polymarket_source_override or None,
+                "kalshi_reviewed_source": (
+                    kalshi_reviewed_source.canonical_id if kalshi_reviewed_source else None
+                ),
+                "polymarket_reviewed_source": (
+                    polymarket_reviewed_source.canonical_id if polymarket_reviewed_source else None
+                ),
                 "reviewer_notes": reviewer_notes,
             },
         )
