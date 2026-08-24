@@ -35,6 +35,23 @@ Source: <https://docs.kalshi.com/getting_started/orderbook_responses>,
 > and older docs. This project targets the `orderbook_fp` / `*_dollars` form only.
 > **ASSUMPTION:** field names remain `orderbook_fp.yes_dollars` / `no_dollars`.
 
+### A3b. Market fields — VERIFIED against a live payload (2026-08-23)
+Read-only `GET /markets?status=open` returned 200 **without credentials**, confirming A4.
+Corrections found against the live response:
+
+- **`tick_size_dollars` does not exist.** The price increment comes from
+  `price_ranges[].step` alongside `price_level_structure` (observed `deci_cent`, step
+  `0.0010`). Defaulting to `0.01` was too coarse and made the depth walker skip valid
+  sub-penny levels as off-grid. Fixed.
+- **`settlement_source` does not exist.** It stays empty rather than being invented; an
+  unnamed settlement source is itself material at approval time.
+- `*_dollars` and `*_fp` fields are strings, as assumed.
+- `rules_primary` can be **empty** on some markets (observed on an MVE combo market), so
+  a rules fingerprint may rest on `rules_secondary` alone. Treat such markets as
+  unapprovable until the full rules are obtained elsewhere.
+- `GET /markets/{ticker}/orderbook` returned `{"orderbook_fp": {"yes_dollars": [],
+  "no_dollars": []}}` unauthenticated, confirming **A2** exactly.
+
 ### A3. Market fields — ASSUMPTION (partially verified)
 `GET /markets` returns `ticker`, `title`, `event_ticker`, `yes_bid_dollars`, `volume_fp`,
 `status`, `close_time`. Exact set of `*_dollars` / `*_fp` suffixed fields is **not fully
@@ -108,7 +125,29 @@ Rounding, per the fee-rounding page:
 
 ---
 
-## Polymarket US — implemented (public REST, read-only)
+## Polymarket US — implemented and VERIFIED against a live payload (2026-08-23)
+
+`GET https://gateway.polymarket.us/v1/markets?active=true&closed=false` returned 200
+**without any credential**. Corrections found against the live response:
+
+- **`feeCoefficient` is published per market** (observed `0.06`). This satisfies the
+  per-market fee requirement directly and is now preferred over any configured default.
+- **`outcomes` arrives as a JSON-encoded string** (`'["Yes","No"]'`), not a list; reading
+  it undecoded would iterate characters. `marketSides` carries the authoritative side
+  identity (`identifier`, `description`, `long`).
+- **`orderPriceMinTickSize` is `0.001`**, finer than the assumed penny.
+- **`resolutionSource` does not exist.** No named settlement source is published.
+- `status` is an enum string (`MARKET_STATUS_OPEN`) alongside the boolean flags.
+- `bestBidQuote`/`bestAskQuote` are objects carrying `currency: "USD"`, confirming USD
+  settlement at the wire level. No `condition_id`, `token_id`, `polygon` or `usdc` appears
+  anywhere in the payload — the products really are separate.
+
+**The `description` question is answered: it does carry enforceable rules.** Real
+descriptions state postponement, rescheduling, cancellation and elimination behaviour.
+Two caveats for approval: settlement language is partly discretionary ("*may* settle at
+last fair market prices"), and no authoritative settlement source is named.
+
+## Polymarket US — implementation notes
 
 Checked against official documentation on **2026-08-23**. These facts define the next
 fixture-backed adapter; they are not evidence that the current Global mapper is compatible.

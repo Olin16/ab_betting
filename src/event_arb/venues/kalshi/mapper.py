@@ -153,6 +153,40 @@ def build_book(
     )
 
 
+def _tick_size(payload: dict[str, Any]) -> Decimal:
+    """Resolve the price increment.
+
+    Live payloads carry no ``tick_size_dollars``. The increment comes from
+    ``price_ranges[].step`` alongside ``price_level_structure`` (observed ``deci_cent``,
+    step ``0.0010``). Defaulting to a penny would be too coarse and would make the
+    depth walker skip legitimate sub-penny levels as off-grid — suppressing real
+    liquidity rather than inventing it, but wrong either way.
+    """
+    ranges = payload.get("price_ranges")
+    if isinstance(ranges, list):
+        steps: list[Decimal] = []
+        for entry in ranges:
+            if not isinstance(entry, dict) or entry.get("step") is None:
+                continue
+            try:
+                step = Decimal(str(entry["step"]))
+            except (InvalidOperation, ValueError):
+                continue
+            if step > 0:
+                steps.append(step)
+        if steps:
+            # Finest step across ranges: a coarser value would reject valid levels.
+            return min(steps)
+
+    legacy = payload.get("tick_size_dollars", payload.get("tick_size"))
+    if legacy is not None:
+        try:
+            return Decimal(str(legacy))
+        except (InvalidOperation, ValueError):
+            pass
+    return Decimal("0.01")
+
+
 def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -> VenueMarket:
     """Normalize a Kalshi market object.
 
@@ -165,11 +199,7 @@ def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -
         raise MarketDataError("Kalshi market payload missing 'ticker'", Venue.KALSHI)
 
     status = str(payload.get("status", "")).lower()
-    tick_raw = payload.get("tick_size_dollars", payload.get("tick_size"))
-    try:
-        tick = Decimal(str(tick_raw)) if tick_raw is not None else Decimal("0.01")
-    except (InvalidOperation, ValueError):
-        tick = Decimal("0.01")
+    tick = _tick_size(payload)
 
     rules = " ".join(
         str(payload.get(key, ""))

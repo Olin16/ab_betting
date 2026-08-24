@@ -220,6 +220,56 @@ def parse_book(
     )
 
 
+def _json_string_list(value: Any) -> tuple[str, ...]:
+    """Parse a field that arrives as a JSON-encoded *string*.
+
+    ``outcomes`` is delivered as ``'["Yes","No"]'`` rather than a list. Reading it as a
+    sequence without decoding would iterate the characters of a string.
+    """
+    if isinstance(value, list):
+        return tuple(str(item) for item in value)
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return ()
+        if isinstance(decoded, list):
+            return tuple(str(item) for item in decoded)
+    return ()
+
+
+def _outcomes(payload: dict[str, Any]) -> tuple[str, ...]:
+    """Prefer ``marketSides`` for outcome identity, falling back to ``outcomes``.
+
+    ``marketSides`` carries the authoritative side identity — ``identifier``, a
+    ``description`` such as "Yes", and a ``long`` boolean — while ``outcomes`` is a
+    display-oriented JSON string.
+    """
+    sides = payload.get("marketSides")
+    if isinstance(sides, list) and sides:
+        names = [
+            str(side.get("description", "")).strip()
+            for side in sides
+            if isinstance(side, dict) and side.get("description")
+        ]
+        if names:
+            return tuple(names)
+    decoded = _json_string_list(payload.get("outcomes"))
+    return decoded or ("YES", "NO")
+
+
+def _is_open(payload: dict[str, Any]) -> bool:
+    """Interpret the enum-style status alongside the boolean flags."""
+    status = str(payload.get("status", "")).upper()
+    if status and status != "MARKET_STATUS_OPEN":
+        return False
+    return (
+        bool(payload.get("active", True))
+        and not bool(payload.get("closed", False))
+        and not bool(payload.get("archived", False))
+    )
+
+
 def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -> VenueMarket:
     """Normalize a Polymarket US market object."""
     if not isinstance(payload, dict):
@@ -232,12 +282,25 @@ def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -
     description = str(payload.get("description", "") or "")
     completeness = rules_completeness(description)
 
-    active = bool(payload.get("active", True))
-    closed = bool(payload.get("closed", False))
-    archived = bool(payload.get("archived", False))
+    is_open = _is_open(payload)
 
     tick = _decimal(payload.get("orderPriceMinTickSize"), "orderPriceMinTickSize", Decimal("0.01"))
     min_qty = _decimal(payload.get("minimumTradeQty"), "minimumTradeQty", Decimal("1"))
+
+    # The market object carries its own fee coefficient, which is exactly the per-market
+    # fee setting the design requires. Prefer it over any configured default; fall back
+    # only when the venue omits it.
+    resolved_fees = fee_config
+    if resolved_fees is None:
+        coefficient = payload.get("feeCoefficient")
+        resolved_fees = (
+            polymarket_us_fee_config(
+                taker_theta=_decimal(coefficient, "feeCoefficient"),
+                source="market.feeCoefficient",
+            )
+            if coefficient is not None
+            else polymarket_us_fee_config()
+        )
 
     metadata = dict(payload)
     metadata["_product"] = PRODUCT
@@ -248,21 +311,18 @@ def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -
         venue_market_id=market_id,
         title=str(payload.get("question", payload.get("title", market_id))),
         rules_text=description,
-        outcomes=("YES", "NO"),
+        outcomes=_outcomes(payload),
         close_time=_parse_time(payload.get("endDate") or payload.get("closeTime")),
+        # Live payloads carry no resolutionSource field. It stays empty rather than being
+        # invented, and an empty settlement source is itself material at approval time.
         settlement_source=str(payload.get("resolutionSource", "") or ""),
         tick_size=tick,
         min_quantity_increment=min_qty,
-        fee_config=fee_config or polymarket_us_fee_config(),
-        is_active=active and not closed and not archived,
+        fee_config=resolved_fees,
+        is_active=is_open,
         # A market whose rules we cannot read in full is not tradable for our purposes,
         # because it cannot be honestly approved as settlement-equivalent to anything.
-        is_tradable=(
-            active
-            and not closed
-            and not archived
-            and completeness is RulesCompleteness.LIKELY_COMPLETE
-        ),
+        is_tradable=(is_open and completeness is RulesCompleteness.LIKELY_COMPLETE),
         # USD, not USDC. No haircut, no depeg, no Polygon.
         settlement_asset=SettlementAsset.USD,
         raw_metadata=metadata,
