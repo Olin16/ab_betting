@@ -41,9 +41,20 @@ def settings_for(fixture_dir: Path, **trial: object) -> Settings:
 # ------------------------------------------------------------- budget validation
 
 
-def test_default_freshness_bound_is_flagged_as_too_tight() -> None:
-    """2s bound against a 5s poll cycle cannot be satisfied; say so rather than pretend."""
-    warning = Settings().validate_freshness_budget()
+def test_the_default_bound_is_no_longer_flagged_by_a_wrong_model() -> None:
+    """The default 2s bound is achievable once the cycle interval is out of the formula.
+
+    It used to warn, because the model added a whole 5s cycle to every book's age. The
+    warning was pressure to raise max_book_age_ms to satisfy arithmetic that did not
+    describe the runtime.
+    """
+    assert Settings().validate_freshness_budget() is None
+
+
+def test_a_bound_below_the_measured_cost_is_still_flagged() -> None:
+    """Weakening the model must not weaken the check it exists to make."""
+    settings = Settings(opportunity=OpportunitySettings(max_book_age_ms=100))
+    warning = settings.validate_freshness_budget(observed_batch_seconds=1.5)
     assert warning is not None
     assert "below the" in warning
 
@@ -56,18 +67,23 @@ def test_a_coherent_budget_produces_no_warning() -> None:
     assert settings.validate_freshness_budget() is None
 
 
-def test_required_bound_accounts_for_cycle_batch_and_tolerance() -> None:
-    """The bound is derived, not guessed: cycle + refresh batch + clock tolerance."""
+def test_required_bound_is_the_refresh_batch_plus_tolerance() -> None:
+    """Derived from what a refresh costs, not from how often the cycle runs."""
     trial = TrialSettings(
         refresh_interval_seconds=5.0,
         scan_interval_seconds=3.0,
         clock_tolerance_seconds=0.5,
     )
     assert trial.cycle_interval_seconds == 5.0
-    # No pairs configured -> one estimated request of 0.4s.
-    assert trial.required_book_age_ms() == 5900
+    # No pairs configured -> one estimated request of 0.4s, plus 0.5s tolerance.
+    assert trial.required_book_age_ms() == 900
     # A measured 1.5s batch replaces the estimate.
-    assert trial.required_book_age_ms(observed_batch_seconds=1.5) == 7000
+    assert trial.required_book_age_ms(observed_batch_seconds=1.5) == 2000
+    # The cycle interval must not move the answer.
+    slower = TrialSettings(
+        refresh_interval_seconds=30.0, scan_interval_seconds=30.0, clock_tolerance_seconds=0.5
+    )
+    assert slower.required_book_age_ms(observed_batch_seconds=1.5) == 2000
 
 
 # ------------------------------------------------------------- cycle ordering

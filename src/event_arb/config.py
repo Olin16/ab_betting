@@ -200,9 +200,15 @@ class TrialSettings(BaseModel):
     def required_book_age_ms(self, observed_batch_seconds: float | None = None) -> int:
         """Smallest freshness bound this cycle can actually satisfy.
 
-        A book is at worst one full cycle old, plus the refresh batch it was fetched in
-        (books are refreshed serially, so the first is already a batch old when the scan
-        runs), plus clock tolerance.
+        The runtime refreshes and then scans within one cycle, and skips the scan when the
+        refresh fails, so no book survives into a later cycle's scan. The oldest book a scan
+        can see is the first one fetched in the batch that immediately preceded it: about
+        one batch old, plus clock tolerance.
+
+        The cycle interval used to be a term here, from when refresh and scan ran on
+        independent timers. Sequencing them removed that case but the term stayed, so the
+        model demanded a bound several times larger than reality — pressure to raise
+        ``max_book_age_ms`` and loosen the check that catches genuinely stale prices.
 
         ``observed_batch_seconds`` comes from a real refresh once one has happened. Before
         that the batch is estimated from the number of watched markets — a stated estimate
@@ -213,7 +219,7 @@ class TrialSettings(BaseModel):
             if observed_batch_seconds is not None
             else self.estimated_batch_seconds()
         )
-        return int((self.cycle_interval_seconds + batch + self.clock_tolerance_seconds) * 1000)
+        return int((batch + self.clock_tolerance_seconds) * 1000)
 
     def estimated_batch_seconds(self) -> float:
         """Estimated serial refresh cost before any batch has been observed."""

@@ -83,6 +83,12 @@ class RefreshTiming:
     #: Slowest batch observed, which is what a bound must actually accommodate.
     worst_batch_seconds: float = 0.0
     batches_observed: int = 0
+    #: Slowest observed gap between a batch starting and the scan that consumed it. Covers
+    #: the batch itself plus everything the runtime does in between — currently persisting
+    #: the snapshots. Measured rather than assumed, because that work grows with the number
+    #: of watched markets just as the batch does.
+    worst_batch_to_scan_seconds: float = 0.0
+    scans_observed: int = 0
 
     def record(self, duration_seconds: float, requests: int) -> None:
         self.last_batch_seconds = duration_seconds
@@ -90,15 +96,35 @@ class RefreshTiming:
         self.worst_batch_seconds = max(self.worst_batch_seconds, duration_seconds)
         self.batches_observed += 1
 
-    def required_age_ms(self, cycle_seconds: float, clock_tolerance_seconds: float) -> int:
-        """Smallest bound that a cycle of this observed cost can actually satisfy.
+    def record_scan_lag(self, seconds: float) -> None:
+        """Time from the start of a refresh batch to the scan that used it."""
+        self.worst_batch_to_scan_seconds = max(self.worst_batch_to_scan_seconds, seconds)
+        self.scans_observed += 1
 
-        A book is at worst one cycle old, plus the batch it was fetched in, plus clock
-        tolerance. Before anything has been observed this reduces to the cycle plus
-        tolerance, which is the same conservative answer as before but stops being a guess
-        as soon as real timings arrive.
+    @property
+    def worst_book_age_seconds(self) -> float:
+        """Age of the oldest book a scan can see, by observation.
+
+        The runtime refreshes and then scans **within one cycle**, and skips the scan
+        entirely when the refresh fails, so no book survives into a later cycle's scan. The
+        oldest book a scan sees is therefore the first one fetched in the batch that
+        immediately preceded it — roughly one batch old, not one cycle plus one batch.
+
+        Prefer the measured batch-to-scan lag when a scan has been observed; it covers the
+        batch plus the persist step between them. Fall back to the batch alone otherwise.
         """
-        return int((cycle_seconds + self.worst_batch_seconds + clock_tolerance_seconds) * 1000)
+        return max(self.worst_batch_to_scan_seconds, self.worst_batch_seconds)
+
+    def required_age_ms(self, clock_tolerance_seconds: float) -> int:
+        """Smallest bound a cycle of this observed cost can actually satisfy.
+
+        The cycle interval is deliberately **not** a term. It used to be, on the assumption
+        that a scan could land on the previous cycle's books; sequencing refresh before scan
+        removed that possibility, but the formula kept the term. The effect was to demand a
+        bound several times larger than reality and to push operators toward raising
+        ``max_book_age_ms`` — loosening the very check that catches genuinely stale prices.
+        """
+        return int((self.worst_book_age_seconds + clock_tolerance_seconds) * 1000)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -106,4 +132,6 @@ class RefreshTiming:
             "last_batch_requests": self.last_batch_requests,
             "worst_batch_seconds": round(self.worst_batch_seconds, 3),
             "batches_observed": self.batches_observed,
+            "worst_batch_to_scan_seconds": round(self.worst_batch_to_scan_seconds, 3),
+            "scans_observed": self.scans_observed,
         }

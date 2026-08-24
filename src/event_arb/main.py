@@ -548,10 +548,18 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
         f"  est refresh batch   : {settings.trial.estimated_batch_seconds():.2f}s "
         f"({len(settings.trial.watched_pairs) * 2 or 'no'} watched market(s))"
     )
-    print(f"  required book age   : {settings.trial.required_book_age_ms()}ms")
+    print(
+        f"  required book age   : {settings.trial.required_book_age_ms()}ms "
+        "(refresh batch + clock tolerance)"
+    )
+    print("                        the cycle interval is not a term: the runtime refreshes")
+    print("                        and then scans within one cycle, and skips the scan when")
+    print("                        the refresh fails, so no book survives into a later scan")
     print(f"  freshness budget    : {'OK' if budget is None else 'TOO TIGHT'}")
     if budget:
         print(f"    {budget}")
+        print("    Reduce the refresh batch (fewer watched markets) before raising the")
+        print("    bound: raising it loosens the check that catches genuinely stale books.")
 
     print("\nMarket-data access:")
     print("  Kalshi public REST      : available without credentials")

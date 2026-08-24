@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -178,6 +179,7 @@ class TrialRunner:
             self._settings.trial.scan_interval_seconds,
         )
         while await self._sleep(interval):
+            cycle_started = time.monotonic()
             try:
                 books = await self._scanner.refresh_books()
                 await self._scanner.record_books(books)
@@ -201,6 +203,9 @@ class TrialRunner:
                 continue
 
             try:
+                # Measured, not assumed: this is how old the first book in the batch
+                # actually is when the scan reads it, including the persist step above.
+                self._scanner.refresh_timing.record_scan_lag(time.monotonic() - cycle_started)
                 await self._scan_once()
             except asyncio.CancelledError:
                 raise

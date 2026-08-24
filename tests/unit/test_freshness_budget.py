@@ -37,10 +37,33 @@ def test_timing_tracks_the_worst_batch_not_the_last() -> None:
     assert timing.worst_batch_seconds == 2.0
 
 
-def test_required_age_includes_cycle_batch_and_tolerance() -> None:
+def test_required_age_is_the_batch_plus_tolerance_not_a_whole_cycle() -> None:
+    """Refresh immediately precedes scan, so the cycle interval is not part of book age.
+
+    Including it demanded a bound several times larger than reality, which pushes an
+    operator to raise max_book_age_ms — loosening the check that catches stale prices.
+    """
     timing = RefreshTiming()
     timing.record(1.5, 6)
-    assert timing.required_age_ms(cycle_seconds=5.0, clock_tolerance_seconds=0.5) == 7000
+    assert timing.required_age_ms(clock_tolerance_seconds=0.5) == 2000
+
+
+def test_a_measured_batch_to_scan_lag_supersedes_the_batch_alone() -> None:
+    """The persist step between refresh and scan adds real age; measure it."""
+    timing = RefreshTiming()
+    timing.record(1.5, 6)
+    timing.record_scan_lag(1.9)
+    assert timing.worst_book_age_seconds == 1.9
+    assert timing.required_age_ms(clock_tolerance_seconds=0.5) == 2400
+
+
+def test_the_worst_lag_is_kept_not_the_most_recent() -> None:
+    timing = RefreshTiming()
+    timing.record(1.0, 4)
+    timing.record_scan_lag(2.5)
+    timing.record_scan_lag(1.1)
+    assert timing.worst_batch_to_scan_seconds == 2.5
+    assert timing.scans_observed == 2
 
 
 # -------------------------------------------------------------- one pair
@@ -55,7 +78,9 @@ def test_one_pair_needs_a_small_budget() -> None:
         assumed_request_seconds=0.4,
     )
     assert trial.estimated_batch_seconds() == pytest.approx(0.8)
-    assert trial.required_book_age_ms() == 6300
+    # 0.8s batch + 0.5s default clock tolerance. Previously 6300ms, which included a whole
+    # 5s cycle that the refresh-then-scan ordering makes impossible.
+    assert trial.required_book_age_ms() == 1300
 
 
 def test_many_pairs_need_a_larger_budget() -> None:
