@@ -3,10 +3,11 @@
 A safety-first scanner for **potential** arbitrage between economically equivalent binary
 event contracts on **Kalshi** and **Polymarket**.
 
-> **Venue identity matters:** the implemented Polymarket adapter targets the international
-> CLOB, which US operators may not use. The intended US deployment target is the separate
-> QCX-operated **Polymarket US** API, which **is** implemented for public read-only
-> REST. See the venue status note below.
+> **Venue identity matters.** "Polymarket" is two different venues. **Polymarket US**
+> (QCX LLC) is the deployment target for a US operator and is the default product. The
+> international **Polymarket Global** CLOB is a separate venue that US operators may not
+> use; its adapter exists for the legacy fixture corpus and is never a US fallback.
+> Both are implemented for public read-only REST.
 
 > **This build collects market data, detects opportunities, and paper-trades them.
 > It cannot place a real order.** Live execution (Phase 7) is not implemented: the only

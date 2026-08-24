@@ -22,7 +22,7 @@ Tracks the agreed plan toward a supervised smoke test and then an unattended pap
 | 5 | Continuous scanning and automated paper execution | **Done** |
 | 6 | Retention and operational hardening | **Done** |
 | 7 | Supervised live read-only smoke test | Blocked on human gates only; the adapter is implemented |
-| 8 | Unattended paper trial | Blocked on step 7 evidence and the F2/F5/F6 remediations |
+| 8 | Unattended paper trial | Blocked on step 7 evidence. F2/F5/F6 are done; see below |
 
 ## What is done
 
@@ -103,9 +103,9 @@ Configuration distinguishes US from Global and fails closed: selecting US cannot
 construct the Global client, while selecting Global requires an explicit eligibility and
 permission acknowledgement.
 
-Before step 7, implement and fixture-test the US adapter, complete US onboarding and terms
-review, confirm state eligibility and any production API/conformance approval, and verify
-the current US fee schedule. No technical workaround or Global fallback is acceptable.
+The US adapter is implemented and fixture-tested. Before step 7, complete US onboarding and
+terms review, confirm state eligibility and any production API/conformance approval, and
+verify the current US fee schedule. No technical workaround or Global fallback is acceptable.
 Full detail is in `docs/compliance.md` and `docs/venue-roadmap.md`.
 
 ## Credential requirements (resolved)
@@ -122,12 +122,28 @@ REST polling:
 starting a stream that cannot authenticate, and the dashboard no longer infers streaming
 from merely running in live mode.
 
+## Remediation status
+
+F1–F10 from the readiness review are implemented and each has a regression test. F2 (fee
+policy persistence), F5 (product in every identity) and F6 (honest execution evidence) were
+the three that blocked step 8; they no longer do. Step 8 remains blocked on step 7 evidence
+alone, which is a human gate rather than a code gap.
+
+Two limits are worth restating, because they are what "done" means here rather than
+qualifications on it:
+
+- no paper trade has yet produced `measured` leg-2 evidence, and none can from fixtures —
+  it requires a live venue returning a book that moved (`docs/operations.md`);
+- `paper.leg2_adverse_model_pct` has no calibrated value, so the modelled path is available
+  but unused.
+
 ## Human gates
 
-- [ ] Implement the read-only Polymarket US adapter from synthetic/recorded fixtures.
 - [ ] Complete Polymarket US onboarding, current terms review, state-eligibility check,
       and any required written production API/conformance approval.
 - [ ] At least one real pair approved by a human who read both rulebooks end to end.
 - [ ] Kalshi membership in good standing; Rulebook permits the intended automated activity.
-- [ ] Kalshi authentication verified against a real key (api-assumptions A5), and whether
-      market data requires auth at all (A4).
+- [ ] Kalshi authentication verified against a real key (api-assumptions A5). A4 is
+      resolved: public market-data REST returns 200 without any credential on both venues,
+      verified 2026-08-23. Only the WebSocket handshake requires authentication, which is
+      why `ingestion_mode` defaults to `rest_polling`.
