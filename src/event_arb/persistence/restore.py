@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.enums import MatchStatus
+from event_arb.domain.keys import MarketKey, pair_market_keys
 from event_arb.domain.models import MarketPair, VenueMarket
 from event_arb.matching.approval import check_for_rules_change, suspend_pair
+from event_arb.matching.candidates import pair_id_for
 from event_arb.observability.logging import get_logger
 
 __all__ = ["RestoreReport", "restore_pairs"]
@@ -51,8 +53,8 @@ class RestoreReport:
 
 def restore_pairs(
     stored: dict[str, MarketPair],
-    markets: dict[tuple[Venue, str], VenueMarket],
-    observed: set[tuple[Venue, str]] | None = None,
+    markets: dict[MarketKey, VenueMarket],
+    observed: set[MarketKey] | None = None,
 ) -> tuple[dict[str, MarketPair], RestoreReport]:
     """Return pairs safe to use, suspending approvals that no longer hold.
 
@@ -61,6 +63,10 @@ def restore_pairs(
     a persisted copy will always match the hash it was stored with, so validating against
     cached metadata proves nothing about the venue's current rules. Passing ``None``
     disables the check and is intended only for tests of the hash logic itself.
+
+    An approval whose stored id does not match the id its own legs now hash to is also
+    suspended: the identity scheme changed underneath it, and the recorded review was
+    made against a pair identity that no longer means what it meant then.
 
     Unapproved pairs pass through untouched — there is no claim to invalidate.
     """
@@ -73,10 +79,25 @@ def restore_pairs(
             report.restored.append(pair)
             continue
 
-        kalshi_key = (Venue.KALSHI, pair.kalshi_market_id)
-        polymarket_key = (Venue.POLYMARKET, pair.polymarket_market_id)
-        kalshi = markets.get(kalshi_key)
-        polymarket = markets.get(polymarket_key)
+        expected_id = pair_id_for(
+            pair.kalshi_market_id, pair.polymarket_market_id, pair.polymarket_product
+        )
+        if pair_id != expected_id:
+            # Pair ids gained a product component. An id minted before that change encoded
+            # an ambiguous identity, so the approval recorded against it cannot be carried
+            # forward — the pair is re-proposed under its new id and must be re-reviewed.
+            reason = (
+                f"pair id {pair_id!r} predates the current identity scheme (expected "
+                f"{expected_id!r}); approval must be re-reviewed under the new identity"
+            )
+            suspended = suspend_pair(pair, reason)
+            result[pair_id] = suspended
+            report.suspended.append((suspended, reason))
+            continue
+
+        kalshi_k, polymarket_k = pair_market_keys(pair)
+        kalshi = markets.get(kalshi_k)
+        polymarket = markets.get(polymarket_k)
 
         if kalshi is None or polymarket is None:
             missing = "Kalshi" if kalshi is None else "Polymarket"
@@ -92,7 +113,7 @@ def restore_pairs(
         if observed is not None:
             unobserved = [
                 name
-                for name, key in (("Kalshi", kalshi_key), ("Polymarket", polymarket_key))
+                for name, key in (("Kalshi", kalshi_k), ("Polymarket", polymarket_k))
                 if key not in observed
             ]
             if unobserved:

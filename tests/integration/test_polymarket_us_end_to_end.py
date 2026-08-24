@@ -34,6 +34,7 @@ from event_arb.domain.enums import (
     Venue,
     VenueProduct,
 )
+from event_arb.domain.keys import kalshi_key, polymarket_key
 from event_arb.matching.approval import ApprovalError
 from event_arb.paper.executor import settle
 from event_arb.scanner import Scanner
@@ -79,29 +80,31 @@ def find_pair(scanner: Scanner, polymarket_id: str) -> str:
 async def test_us_product_selects_the_us_fixture_corpus(us_scanner: Scanner) -> None:
     """Global market ids must not appear when the US product is configured."""
     await us_scanner.discover()
-    polymarket_ids = {mid for (venue, mid) in us_scanner.state.markets if venue is Venue.POLYMARKET}
+    polymarket_ids = {
+        mid for (venue, _p, mid) in us_scanner.state.markets if venue is Venue.POLYMARKET
+    }
     assert US_FED in polymarket_ids
     assert not any(mid.startswith("0x") for mid in polymarket_ids)
 
 
 async def test_discovered_us_markets_carry_the_us_product(us_scanner: Scanner) -> None:
     await us_scanner.discover()
-    market = us_scanner.state.markets[(Venue.POLYMARKET, US_FED)]
+    market = us_scanner.state.markets[polymarket_key(VenueProduct.POLYMARKET_US, US_FED)]
     assert market.product is VenueProduct.POLYMARKET_US
     assert market.fee_config.fee_policy is FeePolicy.POLYMARKET_US_BANKERS_CENT
 
 
 async def test_both_legs_settle_in_usd(us_scanner: Scanner) -> None:
     await us_scanner.discover()
-    kalshi = us_scanner.state.markets[(Venue.KALSHI, KALSHI_FED)]
-    polymarket = us_scanner.state.markets[(Venue.POLYMARKET, US_FED)]
+    kalshi = us_scanner.state.markets[kalshi_key(KALSHI_FED)]
+    polymarket = us_scanner.state.markets[polymarket_key(VenueProduct.POLYMARKET_US, US_FED)]
     assert kalshi.settlement_asset is SettlementAsset.USD
     assert polymarket.settlement_asset is SettlementAsset.USD
 
 
 async def test_us_market_uses_its_own_fee_coefficient(us_scanner: Scanner) -> None:
     await us_scanner.discover()
-    market = us_scanner.state.markets[(Venue.POLYMARKET, US_FED)]
+    market = us_scanner.state.markets[polymarket_key(VenueProduct.POLYMARKET_US, US_FED)]
     assert market.fee_config.taker_rate == Decimal("0.06")
     assert market.fee_config.source == "market.feeCoefficient"
 
@@ -111,10 +114,10 @@ async def test_sub_penny_ticks_are_accepted_by_the_depth_walker(
 ) -> None:
     """0.001 prices must fill; a penny tick would reject them as off-grid."""
     scanner = await prepared(us_scanner)
-    book = scanner.store.get(Venue.POLYMARKET, US_FED)
+    book = scanner.store.get(polymarket_key(VenueProduct.POLYMARKET_US, US_FED))
     assert book is not None
     assert book.yes.asks[0].price == Decimal("0.380")
-    market = scanner.state.markets[(Venue.POLYMARKET, US_FED)]
+    market = scanner.state.markets[polymarket_key(VenueProduct.POLYMARKET_US, US_FED)]
     assert market.tick_size == Decimal("0.001")
 
 
@@ -267,7 +270,9 @@ async def test_stale_books_suppress_us_opportunities(us_scanner: Scanner) -> Non
 async def test_untradable_us_markets_are_excluded(us_scanner: Scanner) -> None:
     """Markets whose rules text is insufficient cannot reach an opportunity."""
     await us_scanner.discover()
-    thin = us_scanner.state.markets[(Venue.POLYMARKET, "market-with-thin-rules")]
+    thin = us_scanner.state.markets[
+        polymarket_key(VenueProduct.POLYMARKET_US, "market-with-thin-rules")
+    ]
     assert thin.is_tradable is False
 
 

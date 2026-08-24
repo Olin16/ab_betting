@@ -107,6 +107,7 @@ def build_book(
 
     return OrderBook(
         venue=Venue.POLYMARKET,
+        product=VenueProduct.POLYMARKET_GLOBAL,
         market_id=market_id,
         yes=yes_side,
         no=no_side,

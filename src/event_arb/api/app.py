@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from event_arb.alerts import AlertDispatcher
 from event_arb.config import IngestionMode, Settings, get_settings
-from event_arb.domain.enums import Venue
+from event_arb.domain.keys import pair_market_keys
 from event_arb.domain.models import ReviewedSource
 from event_arb.matching.readiness import assess_readiness
 from event_arb.matching.rules_diff import compare_rules
@@ -198,8 +198,9 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         pair = runtime.state.pairs.get(pair_id)
         if pair is None:
             raise HTTPException(status_code=404, detail="pair not found")
-        kalshi = runtime.state.markets.get((Venue.KALSHI, pair.kalshi_market_id))
-        polymarket = runtime.state.markets.get((Venue.POLYMARKET, pair.polymarket_market_id))
+        kalshi_k, polymarket_k = pair_market_keys(pair)
+        kalshi = runtime.state.markets.get(kalshi_k)
+        polymarket = runtime.state.markets.get(polymarket_k)
         if kalshi is None or polymarket is None:
             raise HTTPException(status_code=404, detail="market metadata missing")
         comparison = compare_rules(kalshi, polymarket)
@@ -213,8 +214,8 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             readiness=assess_readiness(
                 pair, kalshi, polymarket, differences=comparison.differences
             ),
-            kalshi_book=runtime.store.get(Venue.KALSHI, pair.kalshi_market_id),
-            polymarket_book=runtime.store.get(Venue.POLYMARKET, pair.polymarket_market_id),
+            kalshi_book=runtime.store.get(kalshi_k),
+            polymarket_book=runtime.store.get(polymarket_k),
         )
 
     @app.get("/opportunities", response_class=HTMLResponse)

@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from event_arb.domain.enums import Venue
+from event_arb.domain.keys import kalshi_key
 from event_arb.orderbooks.book import BookStore
 from event_arb.orderbooks.freshness import FreshnessPolicy
 from event_arb.orderbooks.synchronizer import BookSynchronizer
@@ -46,7 +47,7 @@ async def test_synchronizer_primes_the_store_from_snapshots() -> None:
     await sync.prime({Venue.KALSHI: [KALSHI_FED], Venue.POLYMARKET: [POLY_FED]})
 
     assert len(store) == 2
-    book, verdict = store.evaluate(Venue.KALSHI, KALSHI_FED)
+    book, verdict = store.evaluate(kalshi_key(KALSHI_FED))
     assert book is not None and verdict is not None
     assert verdict.is_fresh
 
@@ -57,7 +58,7 @@ async def test_synchronizer_marks_books_stale_when_priming_fails() -> None:
     adapters = {Venue.KALSHI: FixtureAdapter(Venue.KALSHI, FIXTURES)}
     sync = BookSynchronizer(store, adapters)
     await sync.prime({Venue.KALSHI: ["DOES-NOT-EXIST"]})
-    assert store.get(Venue.KALSHI, "DOES-NOT-EXIST") is None
+    assert store.get(kalshi_key("DOES-NOT-EXIST")) is None
 
 
 async def test_health_report_reflects_adapter_activity() -> None:

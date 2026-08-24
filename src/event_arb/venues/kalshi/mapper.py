@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from event_arb.domain.enums import Outcome, SettlementAsset, Venue
+from event_arb.domain.enums import Outcome, SettlementAsset, Venue, VenueProduct
 from event_arb.domain.models import (
     BookLevel,
     FeeConfig,
@@ -135,6 +135,7 @@ def build_book(
     now = received_at or datetime.now(UTC)
     return OrderBook(
         venue=Venue.KALSHI,
+        product=VenueProduct.NONE,
         market_id=market_id,
         yes=OrderBookSide(
             outcome=Outcome.YES,

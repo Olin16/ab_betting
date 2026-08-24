@@ -15,6 +15,13 @@ from decimal import Decimal
 
 from event_arb.config import DataSource, PolymarketProduct, Settings
 from event_arb.domain.enums import MatchStatus, Venue, VenueProduct
+from event_arb.domain.keys import (
+    MarketKey,
+    kalshi_key,
+    market_key,
+    pair_market_keys,
+    polymarket_key,
+)
 from event_arb.domain.models import (
     MarketPair,
     Opportunity,
@@ -102,12 +109,12 @@ def build_adapters(settings: Settings) -> dict[Venue, VenueAdapter]:
 
 @dataclass
 class ScannerState:
-    markets: dict[tuple[Venue, str], VenueMarket] = field(default_factory=dict)
+    markets: dict[MarketKey, VenueMarket] = field(default_factory=dict)
     #: Markets whose metadata was retrieved from the venue during *this* process run.
     #: Persisted metadata does not count: a cached copy trivially matches the hash it was
     #: stored with, so trusting it would let an approval survive without the current rules
     #: ever being fetched.
-    observed_markets: set[tuple[Venue, str]] = field(default_factory=set)
+    observed_markets: set[MarketKey] = field(default_factory=set)
     pairs: dict[str, MarketPair] = field(default_factory=dict)
     last_scan: ScanResult | None = None
     paper_trades: list[PaperTrade] = field(default_factory=list)
@@ -159,12 +166,18 @@ class Scanner:
             else VenueProduct.POLYMARKET_GLOBAL
         )
 
+    def _key(self, venue: Venue, market_id: str) -> MarketKey:
+        """Key a bare ``(venue, id)`` pair using this scanner's configured product."""
+        if venue is Venue.POLYMARKET:
+            return polymarket_key(self.polymarket_product, market_id)
+        return (venue, VenueProduct.NONE, market_id)
+
     def _product_matches(self, market: VenueMarket) -> bool:
         """Runtime guard against mixing products in one process.
 
-        Markets are keyed by ``(Venue, market_id)`` in memory, which cannot distinguish two
-        Polymarket products. A database carrying leftover Global rows would otherwise have a
-        US-configured scanner request Global market ids through the US adapter.
+        Keys carry the product, so a leftover Global row can no longer be mistaken for a US
+        market. It would still be *loaded*, though, and a US-configured scanner has no
+        adapter that can refresh a Global book — so drop it rather than carry dead state.
         """
         if market.venue is not Venue.POLYMARKET:
             return True
@@ -201,7 +214,7 @@ class Scanner:
                         configured_product=self.polymarket_product.value,
                     )
                     continue
-                key = (venue, market.venue_market_id)
+                key = market_key(market)
                 self.state.markets[key] = market
                 self.state.observed_markets.add(key)
             discovered.extend(markets)
@@ -258,7 +271,7 @@ class Scanner:
             if adapter is None:
                 continue
             for market_id in ids:
-                market = self.state.markets.get((venue, market_id))
+                market = self.state.markets.get(self._key(venue, market_id))
                 if market is not None and not market.is_tradable:
                     continue
                 requests += 1
@@ -271,7 +284,7 @@ class Scanner:
                         market_id=market_id,
                         error=str(exc),
                     )
-                    self.store.mark_stale(venue, market_id)
+                    self.store.mark_stale(self._key(venue, market_id))
                     continue
                 self.store.put(book)
                 books.append(book)
@@ -286,7 +299,7 @@ class Scanner:
         this is serial and rate-limited; use :meth:`refresh_books` instead.
         """
         targets: dict[Venue, list[str]] = {}
-        for (venue, market_id), market in self.state.markets.items():
+        for (venue, _product, market_id), market in self.state.markets.items():
             if market.is_tradable:
                 targets.setdefault(venue, []).append(market_id)
         return await self.refresh_books(targets)
@@ -295,8 +308,8 @@ class Scanner:
 
     def generate_pairs(self, min_score: Decimal = Decimal("0.5")) -> list[MarketPair]:
         """Generate candidate pairs. Nothing produced here is approved."""
-        kalshi = [m for (v, _), m in self.state.markets.items() if v is Venue.KALSHI]
-        polymarket = [m for (v, _), m in self.state.markets.items() if v is Venue.POLYMARKET]
+        kalshi = [m for m in self.state.markets.values() if m.venue is Venue.KALSHI]
+        polymarket = [m for m in self.state.markets.values() if m.venue is Venue.POLYMARKET]
         candidates = generate_candidates(kalshi, polymarket, min_score=min_score)
         for pair, _score, _comparison in candidates:
             # Never overwrite a pair a human has already dispositioned.
@@ -316,7 +329,11 @@ class Scanner:
         """
         seeded: list[MarketPair] = []
         for watched in self.settings.trial.watched_pairs:
-            pair_id = pair_id_for(watched.kalshi_market_id, watched.polymarket_market_id)
+            pair_id = pair_id_for(
+                watched.kalshi_market_id,
+                watched.polymarket_market_id,
+                self.polymarket_product,
+            )
             if pair_id in self.state.pairs:
                 continue
             pair = MarketPair(
@@ -353,8 +370,9 @@ class Scanner:
         :meth:`approve_and_persist` when durability is required.
         """
         pair = self.state.pairs[pair_id]
-        kalshi = self.state.markets[(Venue.KALSHI, pair.kalshi_market_id)]
-        polymarket = self.state.markets[(Venue.POLYMARKET, pair.polymarket_market_id)]
+        kalshi_k, polymarket_k = pair_market_keys(pair)
+        kalshi = self.state.markets[kalshi_k]
+        polymarket = self.state.markets[polymarket_k]
         approved = approve_pair(
             pair,
             kalshi,
@@ -445,12 +463,7 @@ class Scanner:
         async with self._db_lock, self.database.session() as session:
             repository = OrderBookSnapshotRepository(session)
             for book in books:
-                product = (
-                    self.polymarket_product.value
-                    if book.venue is Venue.POLYMARKET
-                    else VenueProduct.NONE.value
-                )
-                await repository.record(book, product=product)
+                await repository.record(book)
 
     # --------------------------------------------------------------- paper trading
 
@@ -474,7 +487,7 @@ class Scanner:
         async def provider(venue: Venue, market_id: str, latency_ms: int) -> OrderBook | None:
             if wait and latency_ms > 0:
                 await asyncio.sleep(latency_ms / 1000.0)
-            return self.store.get(venue, market_id)
+            return self.store.get(self._key(venue, market_id))
 
         executor = PaperExecutor(
             self.settings.paper,
@@ -482,8 +495,10 @@ class Scanner:
             kalshi_direct_member=self.settings.kalshi.direct_member,
             freshness=self.store.policy,
         )
-        kalshi = self.state.markets[(Venue.KALSHI, opportunity.kalshi_leg.market_id)]
-        polymarket = self.state.markets[(Venue.POLYMARKET, opportunity.polymarket_leg.market_id)]
+        kalshi = self.state.markets[kalshi_key(opportunity.kalshi_leg.market_id)]
+        polymarket = self.state.markets[
+            polymarket_key(self.polymarket_product, opportunity.polymarket_leg.market_id)
+        ]
         trade = await executor.execute(opportunity, kalshi, polymarket)
         self.portfolio.record(trade)
         self.state.paper_trades.append(trade)

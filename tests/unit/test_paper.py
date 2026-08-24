@@ -15,6 +15,7 @@ from event_arb.domain.enums import (
     PaperTradeStatus,
     SettlementAsset,
     Venue,
+    VenueProduct,
 )
 from event_arb.domain.models import (
     BookLevel,
@@ -44,8 +45,10 @@ def make_book(
 ) -> OrderBook:
     # Receipt time is "now": the executor validates freshness at arrival, and these
     # tests are about fill behaviour rather than staleness.
+    product = VenueProduct.POLYMARKET_GLOBAL if venue is Venue.POLYMARKET else VenueProduct.NONE
     return OrderBook(
         venue=venue,
+        product=product,
         market_id=market_id,
         yes=OrderBookSide(outcome=Outcome.YES, asks=yes_asks),
         no=OrderBookSide(outcome=Outcome.NO, asks=no_asks),
@@ -405,8 +408,10 @@ def stale_book(
     **overrides: object,
 ) -> OrderBook:
     base: dict[str, object] = {"is_stale": True}
+    product = VenueProduct.POLYMARKET_GLOBAL if venue is Venue.POLYMARKET else VenueProduct.NONE
     return OrderBook(
         venue=venue,
+        product=product,
         market_id=market_id,
         yes=OrderBookSide(outcome=Outcome.YES, asks=yes_asks),
         no=OrderBookSide(outcome=Outcome.NO, asks=no_asks),

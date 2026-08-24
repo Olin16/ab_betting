@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from event_arb.config import OpportunitySettings, PolymarketSettings
-from event_arb.domain.enums import ArbDirection, RejectionReason, RiskFlag, Venue
+from event_arb.domain.enums import ArbDirection, RejectionReason, RiskFlag
+from event_arb.domain.keys import MarketKey, pair_market_keys
 from event_arb.domain.models import (
     MarketPair,
     Opportunity,
@@ -81,7 +82,7 @@ class OpportunityService:
     def scan(
         self,
         pairs: list[MarketPair],
-        markets: dict[tuple[Venue, str], VenueMarket],
+        markets: dict[MarketKey, VenueMarket],
         now: datetime | None = None,
     ) -> ScanResult:
         """Run one detection cycle over the supplied pairs."""
@@ -89,8 +90,9 @@ class OpportunityService:
         result = ScanResult(scanned_at=reference)
 
         for pair in pairs:
-            kalshi_market = markets.get((Venue.KALSHI, pair.kalshi_market_id))
-            polymarket_market = markets.get((Venue.POLYMARKET, pair.polymarket_market_id))
+            kalshi_k, polymarket_k = pair_market_keys(pair)
+            kalshi_market = markets.get(kalshi_k)
+            polymarket_market = markets.get(polymarket_k)
             if kalshi_market is None or polymarket_market is None:
                 result.rejections.append(
                     RejectedOpportunity(
@@ -131,12 +133,8 @@ class OpportunityService:
                 continue
 
             # (2) Books and freshness.
-            kalshi_book, kalshi_verdict = self._store.evaluate(
-                Venue.KALSHI, pair.kalshi_market_id, reference
-            )
-            polymarket_book, polymarket_verdict = self._store.evaluate(
-                Venue.POLYMARKET, pair.polymarket_market_id, reference
-            )
+            kalshi_book, kalshi_verdict = self._store.evaluate(kalshi_k, reference)
+            polymarket_book, polymarket_verdict = self._store.evaluate(polymarket_k, reference)
             if kalshi_book is None or polymarket_book is None:
                 result.rejections.append(
                     RejectedOpportunity(

@@ -32,7 +32,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from event_arb.config import PolymarketProduct, PolymarketSettings
-from event_arb.domain.enums import Outcome, Venue
+from event_arb.domain.enums import Outcome, Venue, VenueProduct
 from event_arb.domain.models import BookLevel, OrderBook, OrderBookSide
 from event_arb.observability import metrics
 from event_arb.observability.logging import get_logger
@@ -104,6 +104,7 @@ class PolymarketBookState:
         no = side(Outcome.NO)
         return OrderBook(
             venue=Venue.POLYMARKET,
+            product=VenueProduct.POLYMARKET_GLOBAL,
             market_id=self.market_id,
             yes=yes,
             no=no,

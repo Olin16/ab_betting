@@ -23,7 +23,7 @@ from decimal import Decimal
 
 from rapidfuzz import fuzz
 
-from event_arb.domain.enums import MatchStatus
+from event_arb.domain.enums import MatchStatus, VenueProduct
 from event_arb.domain.models import MarketPair, VenueMarket
 from event_arb.matching.normalizer import NormalizedMarket
 from event_arb.matching.rules_diff import RulesComparison, compare_rules
@@ -39,12 +39,29 @@ _WEIGHT_THRESHOLD = Decimal("0.25")
 _CONTRADICTION_PENALTY = Decimal("0.35")
 
 
-def pair_id_for(kalshi_market_id: str, polymarket_market_id: str) -> str:
-    """Deterministic pair identifier, stable across runs."""
+def pair_id_for(
+    kalshi_market_id: str,
+    polymarket_market_id: str,
+    polymarket_product: VenueProduct,
+) -> str:
+    """Deterministic pair identifier, stable across runs.
+
+    ``polymarket_product`` is required rather than defaulted: a default would let a caller
+    that forgot it silently mint a Global id for a US pair, which is the exact confusion
+    this argument exists to prevent.
+
+    Product is part of the identity. Without it, a Kalshi market paired against the same
+    market id on each Polymarket product produced one id, so the two pairs shared approval
+    state and snapshot history.
+
+    Adding it changes every existing id, which **invalidates stored approvals** — pairs are
+    re-proposed under new ids and must be re-reviewed. That is the intended cost: an
+    approval recorded against an ambiguous identity was never safe to reuse.
+    """
     import hashlib
 
-    digest = hashlib.sha256(f"{kalshi_market_id}|{polymarket_market_id}".encode()).hexdigest()
-    return digest[:32]
+    material = f"{kalshi_market_id}|{polymarket_product.value}|{polymarket_market_id}"
+    return hashlib.sha256(material.encode()).hexdigest()[:32]
 
 
 @dataclass(frozen=True)
@@ -180,7 +197,11 @@ def generate_candidates(
                 p_features[polymarket.venue_market_id],
             )
             pair = MarketPair(
-                id=pair_id_for(kalshi.venue_market_id, polymarket.venue_market_id),
+                id=pair_id_for(
+                    kalshi.venue_market_id,
+                    polymarket.venue_market_id,
+                    polymarket.product,
+                ),
                 kalshi_market_id=kalshi.venue_market_id,
                 polymarket_market_id=polymarket.venue_market_id,
                 # Carried from the market itself, never defaulted: a pair that forgot its

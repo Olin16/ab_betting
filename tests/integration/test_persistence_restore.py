@@ -22,6 +22,7 @@ from event_arb.config import (
     WatchedPair,
 )
 from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.keys import kalshi_key, polymarket_key
 from event_arb.persistence.database import Database
 from event_arb.persistence.repositories import (
     AuditLogRepository,
@@ -106,7 +107,7 @@ async def test_decimals_round_trip_exactly_through_storage(
 
     second = Scanner(settings, database=database)
     await second.restore()
-    market = second.state.markets[(Venue.KALSHI, KALSHI_FED)]
+    market = second.state.markets[kalshi_key(KALSHI_FED)]
     assert market.tick_size == Decimal("0.01")
     assert isinstance(market.fee_config.taker_rate, Decimal)
     assert market.fee_config.taker_rate == Decimal("0.07")
@@ -131,7 +132,7 @@ async def test_rules_change_while_down_suspends_the_approval_on_restart(
 
         repository = VenueMarketRepository(session)
         stored = await repository.load_all()
-        edited = stored[(Venue.KALSHI, KALSHI_FED)]
+        edited = stored[kalshi_key(KALSHI_FED)]
         await repository.upsert(
             edited.model_copy(
                 update={"rules_text": edited.rules_text + " Threshold changed to 50bps."}
@@ -189,7 +190,7 @@ async def test_suspension_on_restore_is_audited(fixture_dir: Path, database: Dat
 
         repository = VenueMarketRepository(session)
         stored = await repository.load_all()
-        edited = stored[(Venue.KALSHI, KALSHI_FED)]
+        edited = stored[kalshi_key(KALSHI_FED)]
         await repository.upsert(edited.model_copy(update={"rules_text": "totally rewritten"}))
 
     second = Scanner(settings, database=database)
@@ -417,7 +418,7 @@ async def test_a_reviewed_source_lost_in_storage_suspends_on_restart(
     async with database.session() as session:
         markets = VenueMarketRepository(session)
         stored_markets = await markets.load_all()
-        kalshi_market = stored_markets[(Venue.KALSHI, KALSHI_FED)]
+        kalshi_market = stored_markets[kalshi_key(KALSHI_FED)]
         await markets.upsert(kalshi_market.model_copy(update={"settlement_source": ""}))
 
         pairs = MarketPairRepository(session)
@@ -426,7 +427,7 @@ async def test_a_reviewed_source_lost_in_storage_suspends_on_restart(
 
     # Restore without rediscovery so the blanked stored metadata is what is checked.
     second = Scanner(settings, database=database)
-    second.state.observed_markets.update({(Venue.KALSHI, KALSHI_FED), (Venue.POLYMARKET, POLY_FED)})
+    second.state.observed_markets.update({kalshi_key(KALSHI_FED), (Venue.POLYMARKET, POLY_FED)})
     await second.restore()
     assert second.state.pairs[pair_id].is_tradable_pair is False
 
@@ -455,7 +456,7 @@ async def test_fee_policy_and_rebate_survive_a_round_trip(
         await VenueMarketRepository(session).upsert(market)
     async with database.session() as session:
         restored = (await VenueMarketRepository(session).load_all())[
-            (Venue.POLYMARKET, "pmus-round-trip")
+            polymarket_key(VenueProduct.POLYMARKET_US, "pmus-round-trip")
         ]
 
     assert restored.fee_config.fee_policy is FeePolicy.POLYMARKET_US_BANKERS_CENT

@@ -15,7 +15,8 @@ import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime
 
-from event_arb.domain.enums import Venue
+from event_arb.domain.enums import Venue, VenueProduct
+from event_arb.domain.keys import MarketKey, polymarket_key
 from event_arb.observability.logging import get_logger
 from event_arb.orderbooks.book import BookStore
 from event_arb.venues.base import VenueAdapter
@@ -33,12 +34,21 @@ class BookSynchronizer:
         store: BookStore,
         adapters: dict[Venue, VenueAdapter],
         resync_interval_seconds: float = 30.0,
+        polymarket_product: VenueProduct = VenueProduct.POLYMARKET_GLOBAL,
     ) -> None:
         self._store = store
         self._adapters = adapters
+        #: Needed to key a bare ``(venue, market_id)`` subscription. One synchronizer serves
+        #: one Polymarket product, because one process serves one product.
+        self._polymarket_product = polymarket_product
         self._resync_interval = resync_interval_seconds
         self._tasks: list[asyncio.Task[None]] = []
         self._subscriptions: dict[Venue, list[str]] = {}
+
+    def _key(self, venue: Venue, market_id: str) -> MarketKey:
+        if venue is Venue.POLYMARKET:
+            return polymarket_key(self._polymarket_product, market_id)
+        return (venue, VenueProduct.NONE, market_id)
 
     async def prime(self, subscriptions: dict[Venue, list[str]]) -> None:
         """Fetch an initial REST snapshot for every subscribed market."""
@@ -72,7 +82,7 @@ class BookSynchronizer:
             log.error("sync.stream_failed", venue=venue.value, error=str(exc))
             # Anything we hold for this venue is now unverifiable.
             for market_id in market_ids:
-                self._store.mark_stale(venue, market_id)
+                self._store.mark_stale(self._key(venue, market_id))
             raise
 
     async def _periodic_resync(
@@ -91,7 +101,7 @@ class BookSynchronizer:
                         market_id=market_id,
                         error=str(exc),
                     )
-                    self._store.mark_stale(venue, market_id)
+                    self._store.mark_stale(self._key(venue, market_id))
                     continue
                 self._store.put(book)
                 adapter.health.resync_count += 1

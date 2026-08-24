@@ -20,6 +20,7 @@ from event_arb.domain.enums import (
     RiskFlag,
     SettlementAsset,
     Venue,
+    VenueProduct,
 )
 from event_arb.domain.models import (
     BookLevel,
@@ -51,8 +52,10 @@ def book(
     no_bids: tuple[BookLevel, ...] = (),
     sequence: int | None = 1,
 ) -> OrderBook:
+    product = VenueProduct.POLYMARKET_GLOBAL if venue is Venue.POLYMARKET else VenueProduct.NONE
     return OrderBook(
         venue=venue,
+        product=product,
         market_id=market_id,
         yes=OrderBookSide(outcome=Outcome.YES, bids=yes_bids, asks=yes_asks),
         no=OrderBookSide(outcome=Outcome.NO, bids=no_bids, asks=no_asks),

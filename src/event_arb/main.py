@@ -28,6 +28,7 @@ from event_arb.config import (
     get_settings,
 )
 from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.keys import pair_market_keys
 from event_arb.domain.models import VenueMarket
 from event_arb.matching.approval import ApprovalError
 from event_arb.observability.logging import configure_logging, get_logger
@@ -195,8 +196,9 @@ async def _cmd_pairs(settings: Settings, args: argparse.Namespace) -> int:
     from event_arb.matching.rules_diff import compare_rules
 
     for pair in sorted(scanner.state.pairs.values(), key=lambda p: p.semantic_score, reverse=True):
-        kalshi = scanner.state.markets[(Venue.KALSHI, pair.kalshi_market_id)]
-        polymarket = scanner.state.markets[(Venue.POLYMARKET, pair.polymarket_market_id)]
+        kalshi_k, polymarket_k = pair_market_keys(pair)
+        kalshi = scanner.state.markets[kalshi_k]
+        polymarket = scanner.state.markets[polymarket_k]
         comparison = compare_rules(kalshi, polymarket)
         print(f"\npair {pair.id[:12]}  score={pair.semantic_score}  status={pair.status.value}")
         print(f"  Kalshi     : {kalshi.title}")

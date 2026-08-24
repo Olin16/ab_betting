@@ -338,6 +338,9 @@ class OrderBook(_Frozen):
     """
 
     venue: Venue
+    #: Which product within the venue brand. Part of the book's identity, so a Global book
+    #: can never be served for a US market id.
+    product: VenueProduct = VenueProduct.NONE
     market_id: str
     yes: OrderBookSide
     no: OrderBookSide
@@ -346,6 +349,11 @@ class OrderBook(_Frozen):
     sequence: int | None = None
     is_stale: bool = False
     is_complete: bool = True
+
+    @property
+    def key(self) -> tuple[Venue, VenueProduct, str]:
+        """The market identity this book belongs to."""
+        return (self.venue, self.product, self.market_id)
 
     def side(self, outcome: Outcome) -> OrderBookSide:
         return self.yes if outcome is Outcome.YES else self.no

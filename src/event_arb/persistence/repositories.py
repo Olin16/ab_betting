@@ -116,9 +116,18 @@ class VenueMarketRepository:
         for market in markets:
             await self.upsert(market)
 
-    async def load_all(self) -> dict[tuple[Venue, str], VenueMarket]:
+    async def load_all(self) -> dict[tuple[Venue, VenueProduct, str], VenueMarket]:
+        """Keyed by (venue, product, id).
+
+        Keying on (venue, id) alone collapsed the two Polymarket products: both rows
+        persisted correctly but one silently overwrote the other in memory, so a Global
+        market could answer a US lookup.
+        """
         rows = (await self._session.scalars(select(VenueMarketRow))).all()
-        return {(Venue(r.venue), r.venue_market_id): self._to_domain(r) for r in rows}
+        return {
+            (Venue(r.venue), VenueProduct(r.product), r.venue_market_id): self._to_domain(r)
+            for r in rows
+        }
 
     @staticmethod
     def _to_domain(row: VenueMarketRow) -> VenueMarket:
@@ -323,11 +332,17 @@ class OrderBookSnapshotRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def record(self, book: OrderBook, product: str = "none") -> None:
+    async def record(self, book: OrderBook) -> None:
+        """Product comes from the book itself.
+
+        It used to be a caller-supplied parameter defaulting to ``"none"``, which meant
+        every Polymarket snapshot was filed under the wrong product unless the caller
+        remembered to pass it — and no caller did.
+        """
         self._session.add(
             OrderBookSnapshotRow(
                 venue=book.venue.value,
-                product=product,
+                product=book.product.value,
                 market_id=book.market_id,
                 payload=_json_safe(json.loads(book.model_dump_json())),
                 exchange_timestamp=book.exchange_timestamp,

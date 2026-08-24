@@ -31,8 +31,9 @@ from event_arb.domain.enums import (
     PaperTradeStatus,
     RejectionReason,
     RiskFlag,
-    Venue,
+    VenueProduct,
 )
+from event_arb.domain.keys import kalshi_key, polymarket_key
 from event_arb.matching.approval import ApprovalError
 from event_arb.scanner import Scanner
 from tests.conftest import (
@@ -89,8 +90,8 @@ def find_pair(scanner: Scanner, kalshi_id: str, polymarket_id: str) -> str:
 
 async def test_fixture_feeds_produce_normalized_two_sided_books(scanner: Scanner) -> None:
     await prepared(scanner)
-    kalshi = scanner.store.get(Venue.KALSHI, KALSHI_FED)
-    polymarket = scanner.store.get(Venue.POLYMARKET, POLY_FED)
+    kalshi = scanner.store.get(kalshi_key(KALSHI_FED))
+    polymarket = scanner.store.get(polymarket_key(VenueProduct.POLYMARKET_GLOBAL, POLY_FED))
     assert kalshi is not None and polymarket is not None
 
     # Kalshi publishes bids only; asks must have been synthesized.
@@ -103,8 +104,8 @@ async def test_fixture_feeds_produce_normalized_two_sided_books(scanner: Scanner
 async def test_discovery_finds_all_fixture_markets(scanner: Scanner) -> None:
     markets = await scanner.discover()
     assert len(markets) == 6
-    assert (Venue.KALSHI, KALSHI_FED) in scanner.state.markets
-    assert (Venue.POLYMARKET, POLY_FED) in scanner.state.markets
+    assert kalshi_key(KALSHI_FED) in scanner.state.markets
+    assert polymarket_key(VenueProduct.POLYMARKET_GLOBAL, POLY_FED) in scanner.state.markets
 
 
 # ------------------------------------------------- approved pair -> opportunity
@@ -238,7 +239,7 @@ async def test_explicitly_stale_book_suppresses_opportunities(scanner: Scanner) 
     await prepared(scanner)
     pair_id = find_pair(scanner, KALSHI_FED, POLY_FED)
     scanner.approve(pair_id, approved_by="test@example.com")
-    scanner.store.mark_stale(Venue.POLYMARKET, POLY_FED)
+    scanner.store.mark_stale(polymarket_key(VenueProduct.POLYMARKET_GLOBAL, POLY_FED))
 
     result = scanner.scan()
     assert not [o for o in result.confirmed if o.pair_id == pair_id]
@@ -253,8 +254,8 @@ async def test_rules_change_suspends_an_approved_pair_mid_session(scanner: Scann
     scanner.approve(pair_id, approved_by="test@example.com")
     assert scanner.scan().confirmed
 
-    original = scanner.state.markets[(Venue.KALSHI, KALSHI_FED)]
-    scanner.state.markets[(Venue.KALSHI, KALSHI_FED)] = original.model_copy(
+    original = scanner.state.markets[kalshi_key(KALSHI_FED)]
+    scanner.state.markets[kalshi_key(KALSHI_FED)] = original.model_copy(
         update={"rules_text": original.rules_text + " The threshold is now 50 basis points."}
     )
 

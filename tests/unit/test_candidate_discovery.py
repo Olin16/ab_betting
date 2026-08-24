@@ -209,7 +209,7 @@ def test_report_states_it_took_no_trading_actions() -> None:
 def test_existing_human_dispositions_are_preserved(status: MatchStatus) -> None:
     """A research run must never overwrite a decision a person already made."""
     kalshi, polymarket = kalshi_market(0), us_market(0)
-    pair_id = pair_id_for(kalshi.venue_market_id, polymarket.venue_market_id)
+    pair_id = pair_id_for(kalshi.venue_market_id, polymarket.venue_market_id, polymarket.product)
     existing = {
         pair_id: MarketPair(
             id=pair_id,
@@ -229,7 +229,7 @@ def test_existing_human_dispositions_are_preserved(status: MatchStatus) -> None:
 def test_a_previously_suggested_pair_is_refreshed() -> None:
     """Only human dispositions are protected; a stale suggestion may be regenerated."""
     kalshi, polymarket = kalshi_market(0), us_market(0)
-    pair_id = pair_id_for(kalshi.venue_market_id, polymarket.venue_market_id)
+    pair_id = pair_id_for(kalshi.venue_market_id, polymarket.venue_market_id, polymarket.product)
     existing = {
         pair_id: MarketPair(
             id=pair_id,

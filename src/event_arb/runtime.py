@@ -89,7 +89,11 @@ class TrialRunner:
         self._settings = settings
         self._alerts = alerts
         self._use_websockets = use_websockets
-        self._synchronizer = BookSynchronizer(scanner.store, scanner.adapters)
+        self._synchronizer = BookSynchronizer(
+            scanner.store,
+            scanner.adapters,
+            polymarket_product=scanner.polymarket_product,
+        )
         self._tasks: list[asyncio.Task[None]] = []
         self._stopping = asyncio.Event()
         self._budget_warned = False

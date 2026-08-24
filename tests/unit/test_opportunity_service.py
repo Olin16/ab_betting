@@ -14,7 +14,9 @@ from event_arb.domain.enums import (
     RiskFlag,
     SettlementAsset,
     Venue,
+    VenueProduct,
 )
+from event_arb.domain.keys import kalshi_key, polymarket_key
 from event_arb.domain.models import (
     BookLevel,
     MarketPair,
@@ -29,6 +31,8 @@ from event_arb.venues.kalshi.fees import default_kalshi_fee_config
 from event_arb.venues.polymarket.fees import polymarket_fee_config
 
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
+KALSHI_KEY = kalshi_key("K1")
+POLY_KEY = polymarket_key(VenueProduct.POLYMARKET_GLOBAL, "P1")
 CLOSE = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
 
 SETTINGS = OpportunitySettings(
@@ -49,6 +53,7 @@ def levels(*pairs: tuple[str, str]) -> tuple[BookLevel, ...]:
 def kalshi_book(received_at: datetime, sequence: int | None = 5) -> OrderBook:
     return OrderBook(
         venue=Venue.KALSHI,
+        product=VenueProduct.NONE,
         market_id="K1",
         yes=OrderBookSide(
             outcome=Outcome.YES, bids=levels(("0.53", "100")), asks=levels(("0.55", "300"))
@@ -64,6 +69,7 @@ def kalshi_book(received_at: datetime, sequence: int | None = 5) -> OrderBook:
 def poly_book(received_at: datetime) -> OrderBook:
     return OrderBook(
         venue=Venue.POLYMARKET,
+        product=VenueProduct.POLYMARKET_GLOBAL,
         market_id="P1",
         yes=OrderBookSide(
             outcome=Outcome.YES, bids=levels(("0.62", "200")), asks=levels(("0.64", "250"))
@@ -78,7 +84,7 @@ def poly_book(received_at: datetime) -> OrderBook:
 
 def markets(rules: str = "shared rules") -> dict[tuple[Venue, str], VenueMarket]:
     return {
-        (Venue.KALSHI, "K1"): VenueMarket(
+        KALSHI_KEY: VenueMarket(
             venue=Venue.KALSHI,
             venue_market_id="K1",
             title="K",
@@ -87,7 +93,7 @@ def markets(rules: str = "shared rules") -> dict[tuple[Venue, str], VenueMarket]
             fee_config=default_kalshi_fee_config(),
             settlement_asset=SettlementAsset.USD,
         ),
-        (Venue.POLYMARKET, "P1"): VenueMarket(
+        POLY_KEY: VenueMarket(
             venue=Venue.POLYMARKET,
             venue_market_id="P1",
             title="P",
@@ -108,12 +114,12 @@ def approved_pair(rules: str = "shared rules") -> MarketPair:
         status=MatchStatus.APPROVED,
         manually_approved=True,
         # Approval stores a source-aware fingerprint, so the test must build the same one.
-        kalshi_rules_hash_at_approval=market_map[(Venue.KALSHI, "K1")].fingerprint_with_source(
-            market_map[(Venue.KALSHI, "K1")].settlement_source.lower()
+        kalshi_rules_hash_at_approval=market_map[KALSHI_KEY].fingerprint_with_source(
+            market_map[KALSHI_KEY].settlement_source.lower()
         ),
-        polymarket_rules_hash_at_approval=market_map[
-            (Venue.POLYMARKET, "P1")
-        ].fingerprint_with_source(market_map[(Venue.POLYMARKET, "P1")].settlement_source.lower()),
+        polymarket_rules_hash_at_approval=market_map[POLY_KEY].fingerprint_with_source(
+            market_map[POLY_KEY].settlement_source.lower()
+        ),
     )
 
 
@@ -166,7 +172,7 @@ def test_stale_book_suppresses_all_opportunities() -> None:
 def test_explicitly_stale_book_suppresses_opportunities() -> None:
     """A sequence gap marks the book stale even when it is only milliseconds old."""
     service, store = build_service()
-    store.mark_stale(Venue.KALSHI, "K1")
+    store.mark_stale(KALSHI_KEY)
     result = service.scan([approved_pair()], markets(), now=NOW)
     assert result.opportunities == []
     assert all(r.reason is RejectionReason.BOOK_STALE for r in result.rejections)

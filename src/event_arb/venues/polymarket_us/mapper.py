@@ -208,6 +208,7 @@ def parse_book(
 
     return OrderBook(
         venue=Venue.POLYMARKET,
+        product=VenueProduct.POLYMARKET_US,
         market_id=market_id,
         yes=yes,
         no=no,

@@ -22,6 +22,7 @@ from event_arb.config import (
     WatchedPair,
 )
 from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.keys import kalshi_key
 from event_arb.scanner import Scanner
 from event_arb.venues.fixture import FixtureAdapter
 from tests.conftest import KALSHI_FED, KALSHI_NYC, POLY_FED, POLY_NYC
@@ -208,7 +209,7 @@ async def test_refresh_marks_missing_books_stale_rather_than_silently_skipping(
     scanner.seed_watched_pairs()
     await scanner.refresh_books()
     # A market with no fixture yields no book at all rather than a phantom fresh one.
-    assert scanner.store.get(Venue.KALSHI, "NO-SUCH-MARKET") is None
+    assert scanner.store.get(kalshi_key("NO-SUCH-MARKET")) is None
 
 
 # --------------------------------------------- discovery scoped to watched markets
@@ -280,5 +281,5 @@ async def test_only_discovered_markets_count_as_observed(fixture_dir: Path) -> N
     )
     scanner, _ = build_discovery(fixture_dir, trial)
     await scanner.discover()
-    assert (Venue.KALSHI, KALSHI_FED) in scanner.state.observed_markets
+    assert kalshi_key(KALSHI_FED) in scanner.state.observed_markets
     assert (Venue.KALSHI, KALSHI_NYC) not in scanner.state.observed_markets

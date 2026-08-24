@@ -10,16 +10,23 @@ import pytest
 from event_arb.domain.enums import (
     FeePolicy,
     MatchStatus,
+    Outcome,
     SettlementAsset,
     Venue,
     VenueProduct,
 )
+from event_arb.domain.keys import kalshi_key, market_key, polymarket_key
 from event_arb.domain.models import (
     SETTLEMENT_FINGERPRINT_VERSION,
+    BookLevel,
     FeeConfig,
     MarketPair,
+    OrderBook,
+    OrderBookSide,
     VenueMarket,
 )
+from event_arb.matching.candidates import pair_id_for
+from event_arb.orderbooks.book import BookStore
 from event_arb.persistence.restore import restore_pairs
 
 FEE = FeeConfig(
@@ -89,7 +96,7 @@ def kalshi_market() -> VenueMarket:
 def approved_pair(product: VenueProduct, fingerprint: str) -> MarketPair:
     """``fingerprint`` must be a source-aware fingerprint, as approval stores."""
     return MarketPair(
-        id="p1",
+        id=pair_id_for("K", "SAME-ID", product),
         kalshi_market_id="K",
         polymarket_market_id="SAME-ID",
         polymarket_product=product,
@@ -106,16 +113,32 @@ def test_a_global_approval_cannot_satisfy_a_us_pair() -> None:
     us_market = market(VenueProduct.POLYMARKET_US)
     pair = approved_pair(VenueProduct.POLYMARKET_GLOBAL, global_market.settlement_fingerprint)
 
+    # Deliberately mis-keyed: a US market filed under the Global key. Product-aware keys
+    # make this unreachable in normal operation, so this exercises restore's own product
+    # check as defence in depth against a future keying bug.
     markets = {
-        (Venue.KALSHI, "K"): kalshi_market(),
-        (Venue.POLYMARKET, "SAME-ID"): us_market,
+        kalshi_key("K"): kalshi_market(),
+        polymarket_key(VenueProduct.POLYMARKET_GLOBAL, "SAME-ID"): us_market,
     }
     observed = set(markets)
-    pairs, report = restore_pairs({"p1": pair}, markets, observed=observed)
+    pairs, report = restore_pairs({pair.id: pair}, markets, observed=observed)
 
-    assert pairs["p1"].is_tradable_pair is False
-    assert pairs["p1"].status is MatchStatus.SUSPENDED
+    assert pairs[pair.id].is_tradable_pair is False
+    assert pairs[pair.id].status is MatchStatus.SUSPENDED
     assert "can never satisfy a US pair" in report.suspended[0][1]
+    assert global_market.product is VenueProduct.POLYMARKET_GLOBAL
+
+
+def test_correct_keying_makes_the_wrong_product_simply_absent() -> None:
+    """With product in the key, a US market cannot even be found by a Global lookup."""
+    us_market = market(VenueProduct.POLYMARKET_US)
+    pair = approved_pair(VenueProduct.POLYMARKET_GLOBAL, us_market.settlement_fingerprint)
+
+    markets = {kalshi_key("K"): kalshi_market(), market_key(us_market): us_market}
+    pairs, report = restore_pairs({pair.id: pair}, markets, observed=set(markets))
+
+    assert pairs[pair.id].is_tradable_pair is False
+    assert "metadata unavailable" in report.suspended[0][1]
 
 
 def test_a_matching_product_restores_normally() -> None:
@@ -123,12 +146,9 @@ def test_a_matching_product_restores_normally() -> None:
     pair = approved_pair(
         VenueProduct.POLYMARKET_US, us_market.fingerprint_with_source("fomc statement")
     )
-    markets = {
-        (Venue.KALSHI, "K"): kalshi_market(),
-        (Venue.POLYMARKET, "SAME-ID"): us_market,
-    }
-    pairs, report = restore_pairs({"p1": pair}, markets, observed=set(markets))
-    assert pairs["p1"].is_tradable_pair is True
+    markets = {kalshi_key("K"): kalshi_market(), market_key(us_market): us_market}
+    pairs, report = restore_pairs({pair.id: pair}, markets, observed=set(markets))
+    assert pairs[pair.id].is_tradable_pair is True
     assert report.approvals_kept == 1
 
 
@@ -157,3 +177,63 @@ def test_kalshi_has_no_product_to_discriminate() -> None:
 )
 def test_is_polymarket_helper(product: VenueProduct, expected: bool) -> None:
     assert product.is_polymarket is expected
+
+
+def _book(product: VenueProduct, ask: str) -> OrderBook:
+    return OrderBook(
+        venue=Venue.POLYMARKET,
+        product=product,
+        market_id="SAME-ID",
+        yes=OrderBookSide(
+            outcome=Outcome.YES, asks=(BookLevel(price=Decimal(ask), quantity=Decimal("100")),)
+        ),
+        no=OrderBookSide(outcome=Outcome.NO),
+    )
+
+
+def test_the_book_store_keeps_the_two_products_apart() -> None:
+    """Same market id on both products used to overwrite one book with the other."""
+    store = BookStore()
+    store.put(_book(VenueProduct.POLYMARKET_GLOBAL, "0.60"))
+    store.put(_book(VenueProduct.POLYMARKET_US, "0.90"))
+
+    assert len(store) == 2
+    glob = store.get(polymarket_key(VenueProduct.POLYMARKET_GLOBAL, "SAME-ID"))
+    us = store.get(polymarket_key(VenueProduct.POLYMARKET_US, "SAME-ID"))
+    assert glob is not None and glob.yes.asks[0].price == Decimal("0.60")
+    assert us is not None and us.yes.asks[0].price == Decimal("0.90")
+
+
+def test_marking_one_product_stale_leaves_the_other_alone() -> None:
+    store = BookStore()
+    store.put(_book(VenueProduct.POLYMARKET_GLOBAL, "0.60"))
+    store.put(_book(VenueProduct.POLYMARKET_US, "0.90"))
+
+    store.mark_stale(polymarket_key(VenueProduct.POLYMARKET_US, "SAME-ID"))
+
+    glob = store.get(polymarket_key(VenueProduct.POLYMARKET_GLOBAL, "SAME-ID"))
+    us = store.get(polymarket_key(VenueProduct.POLYMARKET_US, "SAME-ID"))
+    assert us is not None and us.is_stale is True
+    assert glob is not None and glob.is_stale is False
+
+
+def test_a_snapshot_records_the_product_its_book_came_from() -> None:
+    """Product used to be a caller-supplied argument defaulting to 'none'."""
+    assert _book(VenueProduct.POLYMARKET_US, "0.90").key == (
+        Venue.POLYMARKET,
+        VenueProduct.POLYMARKET_US,
+        "SAME-ID",
+    )
+
+
+def test_a_pair_id_from_the_old_scheme_loses_its_approval() -> None:
+    """Pair ids gained a product component; ids minted before that are ambiguous."""
+    us = market(VenueProduct.POLYMARKET_US)
+    pair = approved_pair(VenueProduct.POLYMARKET_US, us.fingerprint_with_source("fomc statement"))
+    legacy = pair.model_copy(update={"id": "0123456789abcdef0123456789abcdef"})
+
+    markets = {kalshi_key("K"): kalshi_market(), market_key(us): us}
+    pairs, report = restore_pairs({legacy.id: legacy}, markets, observed=set(markets))
+
+    assert pairs[legacy.id].is_tradable_pair is False
+    assert "predates the current identity scheme" in report.suspended[0][1]

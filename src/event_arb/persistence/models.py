@@ -140,7 +140,11 @@ class OrderBookSnapshotRow(Base):
     """Retained for replay and audit. See docs/operations.md for retention policy."""
 
     __tablename__ = "orderbook_snapshots"
-    __table_args__ = (Index("ix_books_venue_market_time", "venue", "market_id", "received_at"),)
+    __table_args__ = (
+        # Product is part of the key: without it two products' histories interleave
+        # under one market id and neither can be read back reliably.
+        Index("ix_books_venue_market_time", "venue", "product", "market_id", "received_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     venue: Mapped[str] = mapped_column(String(32))

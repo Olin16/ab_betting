@@ -150,8 +150,11 @@ def test_different_dates_are_heavily_penalized() -> None:
 
 
 def test_pair_id_is_deterministic_and_order_sensitive() -> None:
-    assert pair_id_for("K", "P") == pair_id_for("K", "P")
-    assert pair_id_for("K", "P") != pair_id_for("P", "K")
+    glob, us = VenueProduct.POLYMARKET_GLOBAL, VenueProduct.POLYMARKET_US
+    assert pair_id_for("K", "P", glob) == pair_id_for("K", "P", glob)
+    assert pair_id_for("K", "P", glob) != pair_id_for("P", "K", glob)
+    # The same two ids on different products are different pairs, not one shared pair.
+    assert pair_id_for("K", "P", glob) != pair_id_for("K", "P", us)
 
 
 def test_generated_candidates_are_never_pre_approved() -> None:
