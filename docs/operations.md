@@ -67,6 +67,22 @@ token bucket (default 5 req/s per venue) and honour `Retry-After` on 429. Confir
 limits for your access tier before pointing this at production. The limiter is a term of
 use, not a performance knob.
 
+### Request budget
+
+Paper trading is not free of venue traffic. In REST-polling mode each simulated trade
+issues **two extra order-book requests** — one per leg, at that leg's simulated arrival
+time — on top of scan traffic. They go through the same token bucket, so they consume the
+same budget; they are counted in `event_arb_paper_refetches_total{venue}`.
+
+Budget accordingly:
+
+    requests/minute ≈ (watched markets × scans/minute) + (2 × paper trades/minute)
+
+These requests are not optional padding. Re-reading the cached snapshot instead would hand
+leg 2 the same book the opportunity was detected against, which makes hedge failure
+impossible by construction and produces a 100% hedge rate that means nothing. In streaming
+mode the store is already being updated, so no extra request is issued.
+
 ## Monitoring
 
 `/health` — adapter connectivity, freshness, reconnects, sequence gaps, and
@@ -82,6 +98,30 @@ use, not a performance knob.
 | `event_arb_book_age_ms` | p99 approaching `max_book_age_ms` |
 | `event_arb_opportunities_rejected_total{reason="book_stale"}` | data-quality problem |
 | `event_arb_paper_trades_total{status="leg2_failed"}` | the risk that matters most |
+| `event_arb_paper_refetches_total` | paper traffic against the rate-limit budget |
+| `event_arb_paper_trade_evidence_total{grade="measured"}` | should be ~all trades; see below |
+
+### Reading the hedge success rate
+
+`hedge_success_rate_pct` is only meaningful when the leg-2 book was re-observed **and had
+moved**. Every trade is graded:
+
+| Grade | Meaning | Supports a hedge claim? |
+| --- | --- | --- |
+| `measured` | leg 2 priced against a book observed to have moved | yes |
+| `unchanged_reread` | the venue was asked again and returned the same book | **no** |
+| `modelled` | leg 2 priced against a configured synthetic adverse move | **no** |
+
+Fixture replay is always `unchanged_reread` — the file cannot move. A 100% hedge rate over
+`unchanged_reread` trades shows only that the book did not move in that sample; it is not
+evidence that hedging survives adverse movement, and the daily report prints that caveat
+next to the number. Do not carry such a rate into the live-execution checklist below.
+
+`paper.leg2_adverse_model_pct` applies a synthetic adverse move to leg 2 so fixtures can
+exercise the failure path. It requires `paper.leg2_adverse_model_source` naming the
+observation it was calibrated from (venue, market, date range, sample size) — an
+uncalibrated rate is a guess, and a guess that flatters the strategy is indistinguishable
+from evidence once it reaches a report. Trades run under it are graded `modelled`.
 
 ## Dashboard exposure
 

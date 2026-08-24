@@ -19,6 +19,7 @@ from decimal import Decimal
 from event_arb.domain.enums import PaperTradeStatus, SettlementAsset, Venue
 from event_arb.domain.models import RejectedOpportunity
 from event_arb.domain.money import ZERO, quantize_price
+from event_arb.paper.evidence import EvidenceGrade
 from event_arb.paper.executor import PaperTrade
 
 __all__ = ["DailyReport", "PaperPortfolio"]
@@ -38,6 +39,38 @@ class DailyReport:
     total_unhedged_quantity: Decimal = ZERO
     detected_profit: Decimal = ZERO
     missed_opportunities: dict[str, int] = field(default_factory=dict)
+    #: Trades by leg-2 evidence grade. Only ``measured`` trades observed a book that
+    #: actually moved between legs; the rest cannot support a hedge-rate claim.
+    evidence: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def measured_trades(self) -> int:
+        return self.evidence.get(EvidenceGrade.MEASURED.value, 0)
+
+    @property
+    def hedge_rate_is_measured(self) -> bool:
+        """True only when every counted trade re-observed a book that had moved.
+
+        Read :attr:`hedge_success_rate` alongside this. A 100% rate over trades that all
+        re-read an unchanged book means the book never moved in the sample — it is not
+        evidence that hedging survives adverse movement, and quoting it as such would
+        overstate readiness in exactly the direction that costs money.
+        """
+        return self.trades > 0 and self.measured_trades == self.trades
+
+    @property
+    def evidence_caveat(self) -> str:
+        """One line stating what the hedge rate does and does not show."""
+        if self.trades == 0:
+            return "no trades"
+        if self.hedge_rate_is_measured:
+            return "measured: every leg 2 priced against a book observed to have moved"
+        unmeasured = self.trades - self.measured_trades
+        return (
+            f"NOT measured: {unmeasured} of {self.trades} trades priced leg 2 against a book "
+            "that did not move (or was modelled); this rate does not show hedging surviving "
+            "adverse movement"
+        )
 
     @property
     def hedge_success_rate(self) -> Decimal:
@@ -45,6 +78,9 @@ class DailyReport:
 
         This, not P&L, is the headline number for a cross-venue strategy: an unhedged
         leg is the failure mode that turns arbitrage into gambling.
+
+        It is only meaningful when :attr:`hedge_rate_is_measured` is true. See
+        :attr:`evidence_caveat`.
         """
         if self.trades == 0:
             return ZERO
@@ -71,6 +107,9 @@ class DailyReport:
             "partially_hedged": self.partially_hedged,
             "leg2_failures": self.leg2_failures,
             "hedge_success_rate_pct": str(self.hedge_success_rate),
+            "hedge_rate_is_measured": self.hedge_rate_is_measured,
+            "evidence_caveat": self.evidence_caveat,
+            "evidence": dict(self.evidence),
             "total_pnl": str(quantize_price(self.total_pnl)),
             "total_fees": str(quantize_price(self.total_fees)),
             "detected_profit": str(quantize_price(self.detected_profit)),
@@ -161,6 +200,8 @@ class PaperPortfolio:
             report.total_fees += trade.total_fees
             report.total_unhedged_quantity += trade.unhedged_quantity
             report.detected_profit += trade.opportunity.net_profit
+            grade = trade.leg2_evidence.value
+            report.evidence[grade] = report.evidence.get(grade, 0) + 1
             if trade.status is PaperTradeStatus.BOTH_LEGS_FILLED:
                 report.fully_hedged += 1
             elif trade.status is PaperTradeStatus.PARTIALLY_HEDGED:

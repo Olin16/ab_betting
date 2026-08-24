@@ -56,3 +56,33 @@ def us_settings() -> Settings:
         fixture_dir=FIXTURE_DIR,
         polymarket=PolymarketSettings(product=PolymarketProduct.US),
     )
+
+
+class LiveNetworkError(AssertionError):
+    """Raised when a test tries to open a real connection to a venue."""
+
+
+@pytest.fixture(autouse=True)
+def no_live_venue_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail loudly rather than silently reaching a venue.
+
+    A test that constructs ``Settings(data_source=LIVE)`` gets real venue clients, and
+    ``discover()`` on those clients issues real HTTP requests. That happened during
+    development: an integration test meant to exercise the paper re-fetch path built live
+    adapters and hit Kalshi and Polymarket for real. Nothing was authenticated and no order
+    was placed, but the suite must not be able to reach a venue at all.
+
+    Only the *real* transport is blocked. ``httpx.MockTransport`` does not go through it,
+    so the many client tests that serve canned responses keep working — which is the point:
+    the guard must stop real sockets without pushing tests away from exercising the clients.
+    """
+    import httpx
+
+    async def refuse(self: object, *args: object, **kwargs: object) -> None:
+        raise LiveNetworkError(
+            "a test attempted a real HTTP request to a venue. Use fixture adapters or "
+            "httpx.MockTransport; never let the suite reach a live venue."
+        )
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", refuse, raising=True)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse, raising=True)

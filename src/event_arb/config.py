@@ -16,7 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
@@ -226,8 +226,32 @@ class PaperSettings(BaseModel):
     leg2_latency_ms: int = 400
     #: Fraction of the book at each level assumed to vanish before we arrive.
     adverse_fill_pct: Decimal = Decimal("0")
+    #: Extra depth removed from leg 2 only, to stand in for a book that moved while leg 1
+    #: was filling. Needed for fixture replay, where the file cannot move and an honest
+    #: re-read therefore proves nothing about hedging under adverse conditions.
+    #:
+    #: Any trade run with this above zero is graded ``modelled``: the result describes this
+    #: assumption, not the venue. Leave it at zero to get an honest ``unchanged_reread``
+    #: rather than a synthetic number that reads like a measurement.
+    leg2_adverse_model_pct: Decimal = Decimal("0")
+    #: Where :attr:`leg2_adverse_model_pct` came from. Required when it is non-zero — an
+    #: uncalibrated adverse rate is a guess, and a guess that flatters the strategy is
+    #: indistinguishable from evidence once it reaches a report.
+    leg2_adverse_model_source: str = ""
     starting_usd_balance: Decimal = Decimal("10000")
     starting_usdc_balance: Decimal = Decimal("10000")
+
+    @model_validator(mode="after")
+    def validate_adverse_model(self) -> PaperSettings:
+        if self.leg2_adverse_model_pct < 0 or self.leg2_adverse_model_pct > 1:
+            raise ValueError("paper.leg2_adverse_model_pct must be a fraction between 0 and 1")
+        if self.leg2_adverse_model_pct > 0 and not self.leg2_adverse_model_source.strip():
+            raise ValueError(
+                "paper.leg2_adverse_model_source is required when leg2_adverse_model_pct is "
+                "set: record the observation the rate was calibrated from (venue, market, "
+                "date range, sample size) so the resulting trades can be audited"
+            )
+        return self
 
 
 class AlertSettings(BaseModel):

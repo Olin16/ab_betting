@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from event_arb.config import DataSource, PolymarketProduct, Settings
+from event_arb.config import DataSource, IngestionMode, PolymarketProduct, Settings
 from event_arb.domain.enums import MatchStatus, Venue, VenueProduct
 from event_arb.domain.keys import (
     MarketKey,
@@ -31,11 +31,13 @@ from event_arb.domain.models import (
 )
 from event_arb.matching.approval import approve_pair
 from event_arb.matching.candidates import generate_candidates, pair_id_for
+from event_arb.observability import metrics
 from event_arb.observability.health import HealthReport, build_health_report
 from event_arb.observability.logging import get_logger
 from event_arb.opportunities.service import OpportunityService, ScanResult
 from event_arb.orderbooks.book import BookStore
 from event_arb.orderbooks.freshness import FreshnessPolicy, RefreshTiming
+from event_arb.paper.evidence import ProvidedBook
 from event_arb.paper.executor import PaperExecutor, PaperTrade
 from event_arb.paper.portfolio import PaperPortfolio
 from event_arb.persistence.database import Database
@@ -105,6 +107,16 @@ def build_adapters(settings: Settings) -> dict[Venue, VenueAdapter]:
         Venue.KALSHI: KalshiClient(settings.kalshi),
         Venue.POLYMARKET: polymarket,
     }
+
+
+def _books_differ(before: OrderBook, after: OrderBook) -> bool:
+    """Did the tradable content of a market actually move?
+
+    Compares the price levels only. Receipt time and sequence numbers change on every poll
+    even when the book is identical, so keying "changed" on those would grade a completely
+    static market as a measured observation.
+    """
+    return (before.yes, before.no) != (after.yes, after.no)
 
 
 @dataclass
@@ -470,24 +482,81 @@ class Scanner:
     async def paper_trade(
         self, opportunity: Opportunity, simulate_latency: bool | None = None
     ) -> PaperTrade:
-        """Simulate execution of one opportunity against current books.
+        """Simulate execution of one opportunity against the book at each leg's arrival.
 
-        When ``simulate_latency`` is enabled the provider actually waits the configured
-        network latency before reading the book. That matters: with a live feed the store
-        keeps updating while we wait, so leg 2 genuinely arrives into a book that has
-        moved. Reading the detection-time snapshot instead would make every fill look
-        clean and would produce trial evidence that understates fill failure — the exact
-        thing the trial exists to measure.
+        The provider waits the configured latency and then goes back for the book, so leg 2
+        prices against whatever is there *after* leg 1 — not against the detection-time
+        snapshot, which would make every fill look clean and produce trial evidence that
+        understates hedge failure.
 
-        It defaults to on whenever a continuous feed is running, and off for one-shot
-        fixture runs where waiting would only slow the demo down.
+        How it goes back depends on the ingestion mode:
+
+        - **Streaming**: the store is being updated continuously, so re-reading it is a
+          genuine re-observation and costs no extra request.
+        - **REST polling**: nothing updates the store between legs, so the provider issues
+          a fresh ``fetch_orderbook`` through the venue's rate limiter. That is **two extra
+          requests per simulated trade** beyond scan traffic; they are counted in
+          ``event_arb_paper_refetches_total`` and budgeted in docs/operations.md.
+
+        Every trade records how much its leg-2 book is worth as evidence. A re-fetch that
+        returns an unchanged book is graded ``unchanged_reread``, not ``measured``: it
+        shows the book did not move in that sample, which is not the same claim as hedging
+        surviving adverse movement. Fixture replay is always ``unchanged_reread`` — the
+        file cannot move — unless an adverse-movement model is explicitly configured, in
+        which case it is graded ``modelled``.
         """
         wait = self.streaming if simulate_latency is None else simulate_latency
+        # In REST mode the store is static between legs, so re-reading it is not a
+        # re-observation. Ask the venue again instead, through the same rate limiter.
+        refetch = (
+            self.settings.ingestion_mode is IngestionMode.REST_POLLING
+            and self.settings.data_source is not DataSource.FIXTURE
+        )
 
-        async def provider(venue: Venue, market_id: str, latency_ms: int) -> OrderBook | None:
+        # The books as they stood when the opportunity was detected. "Changed" means
+        # changed relative to what was priced, not relative to the previous leg.
+        baseline = self.store.snapshot()
+
+        async def provider(venue: Venue, market_id: str, latency_ms: int) -> ProvidedBook:
             if wait and latency_ms > 0:
                 await asyncio.sleep(latency_ms / 1000.0)
-            return self.store.get(self._key(venue, market_id))
+            key = self._key(venue, market_id)
+            held = self.store.get(key)
+
+            if not refetch:
+                # Streaming: the store moved under us if the feed delivered anything, so a
+                # re-read is a real observation. Fixtures: it never moves, and saying so is
+                # the point — the grade must not claim a measurement that did not happen.
+                prior = baseline.get(key)
+                return ProvidedBook(
+                    book=held,
+                    refetched=self.streaming,
+                    changed=held is not None and prior is not None and _books_differ(prior, held),
+                )
+
+            adapter = self.adapters.get(venue)
+            if adapter is None:
+                return ProvidedBook(book=held, refetched=False, changed=False)
+            prior = baseline.get(key)
+            try:
+                fresh = await adapter.fetch_orderbook(market_id)
+            except Exception as exc:
+                # A failed re-fetch is a real leg-2 failure, not a reason to fall back to
+                # a stale snapshot and record a clean fill.
+                log.warning(
+                    "paper.refetch_failed",
+                    venue=venue.value,
+                    market_id=market_id,
+                    error=str(exc),
+                )
+                return ProvidedBook(book=None, refetched=True, changed=False)
+            metrics.paper_refetches.labels(venue=venue.value).inc()
+            self.store.put(fresh)
+            return ProvidedBook(
+                book=fresh,
+                refetched=True,
+                changed=prior is not None and _books_differ(prior, fresh),
+            )
 
         executor = PaperExecutor(
             self.settings.paper,

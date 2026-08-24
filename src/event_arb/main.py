@@ -181,6 +181,11 @@ async def _cmd_paper(settings: Settings, args: argparse.Namespace) -> int:
     for key, value in report.as_dict().items():
         print(f"  {key}: {value}")
 
+    # The hedge rate is the number a reader will act on, so the limits of the evidence
+    # behind it are printed next to it rather than left in a JSON field.
+    if report.trades and not report.hedge_rate_is_measured:
+        print(f"\n  !! hedge_success_rate_pct is {report.evidence_caveat}")
+
     if args.export:
         # A one-shot CLI write; offloaded to a thread so the event loop is never blocked.
         await asyncio.to_thread(_write_export, args.export, scanner.portfolio.to_json())

@@ -35,6 +35,14 @@ class BookStore:
         self._books[key] = book
         self._updates[key] = self._updates.get(key, 0) + 1
 
+    def snapshot(self) -> dict[MarketKey, OrderBook]:
+        """A shallow copy of what is held right now.
+
+        Books are frozen, so callers can hold this as a baseline and later ask whether a
+        market moved without the store mutating it underneath them.
+        """
+        return dict(self._books)
+
     def get(self, key: MarketKey) -> OrderBook | None:
         return self._books.get(key)
 

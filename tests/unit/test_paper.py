@@ -26,6 +26,7 @@ from event_arb.domain.models import (
     VenueMarket,
 )
 from event_arb.orderbooks.freshness import FreshnessPolicy
+from event_arb.paper.evidence import ProvidedBook
 from event_arb.paper.executor import PaperExecutor, settle
 from event_arb.paper.fills import simulate_buy
 from event_arb.paper.portfolio import PaperPortfolio
@@ -124,10 +125,23 @@ def make_opportunity(quantity: str = "100") -> Opportunity:
 
 
 def executor_with(
-    books: dict[tuple[Venue, str], OrderBook | None], settings: PaperSettings | None = None
+    books: dict[tuple[Venue, str], OrderBook | None],
+    settings: PaperSettings | None = None,
+    *,
+    refetched: bool = True,
+    changed: bool = True,
 ) -> PaperExecutor:
-    async def provider(venue: Venue, market_id: str, latency_ms: int) -> OrderBook | None:
-        return books.get((venue, market_id))
+    """``refetched``/``changed`` default to a genuine re-observation.
+
+    Most of these tests are about fill arithmetic and pass a deliberately moved leg-2
+    book, so the honest grade for them is ``measured``. The grading rules themselves are
+    tested separately.
+    """
+
+    async def provider(venue: Venue, market_id: str, latency_ms: int) -> ProvidedBook:
+        return ProvidedBook(
+            book=books.get((venue, market_id)), refetched=refetched, changed=changed
+        )
 
     # Books here are module-level constants, so they age as the suite runs. These tests
     # are about fill behaviour; the age-specific cases below use explicitly old books.

@@ -38,6 +38,7 @@ from event_arb.fees import taker_fee_for
 from event_arb.observability import metrics
 from event_arb.observability.logging import get_logger
 from event_arb.orderbooks.freshness import FreshnessPolicy
+from event_arb.paper.evidence import EvidenceGrade, ProvidedBook, grade_leg2
 from event_arb.paper.fills import SimulatedOrder, simulate_buy
 from event_arb.venues.kalshi.fees import KalshiOrderFeeAccumulator
 
@@ -45,8 +46,10 @@ __all__ = ["PaperExecutor", "PaperTrade"]
 
 log = get_logger(__name__)
 
-#: Injected so tests can advance simulated time without sleeping.
-BookProvider = Callable[[Venue, str, int], Awaitable[OrderBook | None]]
+#: Injected so tests can advance simulated time without sleeping. Returns the book *and*
+#: how it was obtained, because a hedge result is only evidence if the venue was actually
+#: re-observed after the latency elapsed. See :mod:`event_arb.paper.evidence`.
+BookProvider = Callable[[Venue, str, int], Awaitable[ProvidedBook]]
 
 
 @dataclass
@@ -68,6 +71,10 @@ class PaperTrade:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     settled_at: datetime | None = None
     notes: list[str] = field(default_factory=list)
+    #: How much the leg-2 outcome is worth as evidence. A hedge success graded
+    #: ``unchanged_reread`` says the book did not move in this sample — never that hedging
+    #: survives adverse movement.
+    leg2_evidence: EvidenceGrade = EvidenceGrade.UNCHANGED_REREAD
 
     # ------------------------------------------------------------------ exposure
 
@@ -161,6 +168,7 @@ class PaperTrade:
             "slippage_vs_detected": str(self.slippage_vs_detected),
             "leg1_latency_ms": self.leg1_latency_ms,
             "leg2_latency_ms": self.leg2_latency_ms,
+            "leg2_evidence": self.leg2_evidence.value,
             "created_at": self.created_at.isoformat(),
             "settled_at": self.settled_at.isoformat() if self.settled_at else None,
             "settlement_result": self.settlement_result,
@@ -184,7 +192,7 @@ class PaperExecutor:
         self._freshness = freshness or FreshnessPolicy()
 
     def _usable(
-        self, book: OrderBook | None, venue: Venue, market_id: str
+        self, provided: ProvidedBook, venue: Venue, market_id: str
     ) -> tuple[OrderBook | None, str]:
         """Validate a book at simulated arrival time.
 
@@ -193,6 +201,7 @@ class PaperExecutor:
         a simulator that trades on stale or mismatched books lets that gate certify
         itself on evidence it should have thrown away.
         """
+        book = provided.book
         if book is None:
             return None, f"no {venue.value} book at arrival time"
         if book.venue is not venue or book.market_id != market_id:
@@ -222,12 +231,11 @@ class PaperExecutor:
         )
 
         # --- Leg 1: Kalshi ------------------------------------------------------
+        kalshi_provided = await self._book_provider(
+            Venue.KALSHI, opportunity.kalshi_leg.market_id, self._settings.leg1_latency_ms
+        )
         kalshi_book, problem = self._usable(
-            await self._book_provider(
-                Venue.KALSHI, opportunity.kalshi_leg.market_id, self._settings.leg1_latency_ms
-            ),
-            Venue.KALSHI,
-            opportunity.kalshi_leg.market_id,
+            kalshi_provided, Venue.KALSHI, opportunity.kalshi_leg.market_id
         )
         if kalshi_book is None:
             # Nothing was sent, so there is no exposure — not a failed hedge.
@@ -265,14 +273,33 @@ class PaperExecutor:
         # would create exposure in the opposite direction.
         hedge_quantity = trade.leg1.filled_quantity
 
-        polymarket_book, problem = self._usable(
-            await self._book_provider(
-                Venue.POLYMARKET,
-                opportunity.polymarket_leg.market_id,
-                self._settings.leg2_latency_ms,
-            ),
+        polymarket_provided = await self._book_provider(
             Venue.POLYMARKET,
             opportunity.polymarket_leg.market_id,
+            self._settings.leg2_latency_ms,
+        )
+        # A configured adverse-movement model overrides whatever the provider observed:
+        # once leg 2 is priced against a synthetic move, the result describes the model.
+        leg2_model_pct = self._settings.leg2_adverse_model_pct
+        trade.leg2_evidence = grade_leg2(
+            refetched=polymarket_provided.refetched,
+            changed=polymarket_provided.changed,
+            modelled=polymarket_provided.modelled or leg2_model_pct > ZERO,
+        )
+        metrics.paper_trade_evidence.labels(grade=trade.leg2_evidence.value).inc()
+        if not trade.leg2_evidence.supports_hedge_claims:
+            detail = (
+                f"modelled at {leg2_model_pct} depth removal "
+                f"({self._settings.leg2_adverse_model_source})"
+                if leg2_model_pct > ZERO
+                else "the book did not move between legs"
+            )
+            trade.notes.append(
+                f"leg 2 evidence is {trade.leg2_evidence.value} — {detail}; this trade's "
+                "hedge outcome does not demonstrate behaviour under adverse movement"
+            )
+        polymarket_book, problem = self._usable(
+            polymarket_provided, Venue.POLYMARKET, opportunity.polymarket_leg.market_id
         )
         if polymarket_book is None:
             # Leg 1 is already on the book, so this is genuine unhedged exposure.
@@ -289,7 +316,7 @@ class PaperExecutor:
             quantity=hedge_quantity,
             client_order_id=f"{trade.id}-leg2",
             limit_price=opportunity.polymarket_leg.worst_price,
-            adverse_pct=self._settings.adverse_fill_pct,
+            adverse_pct=self._settings.adverse_fill_pct + leg2_model_pct,
         )
         trade.polymarket_fees = self._polymarket_fee_for(trade.leg2, polymarket_market)
 

@@ -14,6 +14,8 @@ __all__ = [
     "books_received",
     "opportunities_detected",
     "opportunities_rejected",
+    "paper_refetches",
+    "paper_trade_evidence",
     "paper_trades",
     "render_metrics",
     "resyncs",
@@ -64,6 +66,20 @@ paper_trades = Counter(
     "event_arb_paper_trades_total",
     "Simulated trades, by terminal status.",
     ["status"],
+    registry=REGISTRY,
+)
+paper_refetches = Counter(
+    "event_arb_paper_refetches_total",
+    "Extra order-book requests issued by paper execution at leg arrival time. "
+    "These are additional to scan traffic and count against the venue rate limit.",
+    ["venue"],
+    registry=REGISTRY,
+)
+paper_trade_evidence = Counter(
+    "event_arb_paper_trade_evidence_total",
+    "Simulated trades by how much their leg-2 book is worth as evidence: measured, "
+    "unchanged_reread, or modelled. Only 'measured' supports a hedge-rate claim.",
+    ["grade"],
     registry=REGISTRY,
 )
 venue_up = Gauge(
