@@ -55,6 +55,28 @@ alembic revision --autogenerate -m "description"   # review before committing
 The URL comes from `EVENT_ARB_DATABASE_URL`, never from `alembic.ini`, so a production
 credential is never written into a tracked file.
 
+**Never run migrations against a database you are not prepared to change.** `alembic
+upgrade head` with no `EVENT_ARB_DATABASE_URL` set targets `data/event_arb.db`.
+
+### Migration coverage
+
+The chain is exercised on **both** engines the project supports:
+
+| | SQLite | PostgreSQL 16.15 |
+| --- | --- | --- |
+| full chain up / down / up | yes (11 automated tests) | yes, verified 2026-08-24 |
+| seeded pre-migration rows | yes | yes |
+| foreign keys enforced | no (SQLite default) | **yes** |
+
+PostgreSQL is where `8c41f0b7d2ae` is actually tested: it enforces
+`opportunities.pair_id -> market_pairs.id`, so the insert-new / repoint-children /
+delete-old ordering has to be right. It also caught a defect SQLite cannot — a literal
+`manually_approved = 0`, which SQLite accepts for a boolean column and PostgreSQL rejects.
+
+The automated tests run on SQLite only, because the suite must not require a database
+server. The PostgreSQL run is manual; repeat it before any migration reaches a PostgreSQL
+deployment.
+
 ## Data retention
 
 Retained:
@@ -109,11 +131,29 @@ mode the store is already being updated, so no extra request is issued.
 | `event_arb_venue_up` | 0 for more than a minute |
 | `event_arb_ws_reconnects_total` | sustained increase |
 | `event_arb_resyncs_total` | frequent gaps: the feed is unreliable |
-| `event_arb_book_age_ms` | p99 approaching `max_book_age_ms` |
+| `event_arb_book_age_ms` | p99 approaching `max_book_age_ms` — see the note below |
 | `event_arb_opportunities_rejected_total{reason="book_stale"}` | data-quality problem |
 | `event_arb_paper_trades_total{status="leg2_failed"}` | the risk that matters most |
 | `event_arb_paper_refetches_total` | paper traffic against the rate-limit budget |
 | `event_arb_paper_trade_evidence_total{grade="measured"}` | should be ~all trades; see below |
+
+### Setting max_book_age_ms
+
+The bound must be at least what one refresh actually costs. `event-arb doctor` prints the
+required value:
+
+    required book age = worst refresh batch + clock tolerance
+
+The cycle interval is **not** a term. The runtime refreshes, persists, then scans within
+one cycle, and skips the scan outright when the refresh fails, so no book survives into a
+later cycle's scan. The oldest book a scan can see is the first one fetched in the batch
+immediately before it.
+
+An earlier version of this formula added a whole cycle, demanding roughly 6.3 s where
+reality was 1.3 s. That reported the default 2 s bound as TOO TIGHT and made raising
+`max_book_age_ms` look like the fix — loosening the check that catches genuinely stale
+prices. **If doctor says the budget is too tight, shrink the refresh batch (watch fewer
+markets) before touching the bound.**
 
 ### Reading the hedge success rate
 
@@ -248,7 +288,7 @@ opens a WebSocket.
 event-arb candidates discover \
   --kalshi-limit 250 --polymarket-limit 250 \
   --min-score 0.55 --max-per-market 3 \
-  --max-results 100 --verify-top 25
+  --max-results 100 --recheck-top 25
 ```
 
 Before any request it prints a plan **derived from the adapters that will serve it** —
@@ -258,7 +298,7 @@ pagination behaviour, and what will be retained. In live mode it then waits for 
 
 | Flag | Effect |
 | --- | --- |
-| `--verify-top N` | re-fetches the top N shortlisted markets and marks them verified |
+| `--recheck-top N` | asks the venue whether the top N shortlisted ids still resolve |
 | `--authenticated-mode` | authorises sending configured venue credentials |
 | `--yes-i-authorize-live-requests` | skips the interactive confirmation |
 
@@ -266,10 +306,17 @@ pagination behaviour, and what will be retained. In live mode it then waits for 
 `--authenticated-mode` is given, because the plan it displays is the credential-free one
 and an authorisation based on a false plan is worthless.
 
+`--recheck-top` is an **existence check**. It re-requests the ids and discards the response
+body: nothing is re-normalized, no score is recomputed, no rule comparison is re-run, no
+fingerprint recalculated, no readiness check repeated. Records carry `existence_rechecked`
+and `existence_rechecked_at` rather than "verified", because calling it verification
+invited a reviewer to skip exactly the work it does not do.
+
 Bounds: one page per venue; a returned cursor is counted and reported but **never
 followed**; source catalogues stay in memory and only the capped shortlist is persisted;
 existing human dispositions (approved, rejected, suspended, expert review, under review)
-are restored first and never overwritten.
+are read verbatim and **never written back**. The command persists only pairs that do not
+already exist, so it has no way to alter a decision a human recorded.
 
 ### Request cost of REST paper trading
 

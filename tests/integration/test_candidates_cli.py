@@ -61,13 +61,13 @@ def test_parser_exposes_the_documented_flags() -> None:
             "3",
             "--max-results",
             "100",
-            "--verify-top",
+            "--recheck-top",
             "25",
         ]
     )
     assert args.kalshi_limit == 250
     assert args.min_score == "0.55"
-    assert args.verify_top == 25
+    assert args.recheck_top == 25
     assert args.authenticated_mode is False
     assert args.yes_i_authorize_live_requests is False
 
@@ -175,7 +175,7 @@ def test_fixture_run_makes_no_network_call(
     monkeypatch.setenv("EVENT_ARB_FIXTURE_DIR", str(fixture_dir))
     monkeypatch.setenv("EVENT_ARB_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
-    exit_code = main(["candidates", "discover", "--max-results", "5", "--verify-top", "2"])
+    exit_code = main(["candidates", "discover", "--max-results", "5", "--recheck-top", "2"])
     assert exit_code == 0
 
 

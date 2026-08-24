@@ -66,7 +66,10 @@ class DiscoveryLimits:
     min_score: Decimal = Decimal("0.55")
     max_per_market: int = 3
     max_results: int = 100
-    verify_top: int = 25
+    #: How many shortlisted Polymarket ids to ask the venue about a second time. Named for
+    #: what it does: it rechecks that the id still resolves, and reads nothing from the
+    #: response. It is not verification of the candidate.
+    recheck_top: int = 25
 
     @property
     def max_local_comparisons(self) -> int:
@@ -181,14 +184,15 @@ def build_request_plan(
             url=f"{polymarket_base}{polymarket_one_path}",
             params="(one request per shortlisted market)",
             sends_credentials=polymarket_auth,
-            purpose=f"targeted re-verification of the top {limits.verify_top} candidates",
-            count=f"0..{limits.verify_top}",
+            purpose=f"existence recheck of the top {limits.recheck_top} candidate ids "
+            f"(response body not read)",
+            count=f"0..{limits.recheck_top}",
         ),
     )
     return RequestPlan(
         entries=entries,
         minimum_requests=2,
-        worst_case_requests=2 + limits.verify_top,
+        worst_case_requests=2 + limits.recheck_top,
         limits=limits,
         pagination="one page per venue; a returned cursor is reported and NOT followed",
         polymarket_product=polymarket_product,
@@ -344,11 +348,11 @@ def research_candidates(
     return report
 
 
-def top_slugs_for_verification(report: DiscoveryReport, limits: DiscoveryLimits) -> list[str]:
-    """Polymarket ids of the highest-scoring candidates, capped at ``verify_top``."""
+def top_slugs_for_recheck(report: DiscoveryReport, limits: DiscoveryLimits) -> list[str]:
+    """Polymarket ids of the highest-scoring candidates, capped at ``recheck_top``."""
     ordered = sorted(report.records, key=lambda record: record.score, reverse=True)
     seen: list[str] = []
-    for record in ordered[: limits.verify_top]:
+    for record in ordered[: limits.recheck_top]:
         if record.pair.polymarket_market_id not in seen:
             seen.append(record.pair.polymarket_market_id)
     return seen

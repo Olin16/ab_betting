@@ -16,7 +16,7 @@ from event_arb.candidates import (
     RequestPlan,
     build_request_plan,
     research_candidates,
-    top_slugs_for_verification,
+    top_slugs_for_recheck,
 )
 from event_arb.domain.enums import FeePolicy, MatchStatus, Venue, VenueProduct
 from event_arb.domain.models import FeeConfig, MarketPair, VenueMarket
@@ -90,7 +90,7 @@ LIMITS = DiscoveryLimits(
     min_score=Decimal("0.55"),
     max_per_market=3,
     max_results=100,
-    verify_top=25,
+    recheck_top=25,
 )
 
 
@@ -100,7 +100,7 @@ LIMITS = DiscoveryLimits(
 def test_plan_declares_both_bounded_pages_and_the_worst_case() -> None:
     built = make_plan()
     assert built.minimum_requests == 2
-    assert built.worst_case_requests == 2 + LIMITS.verify_top
+    assert built.worst_case_requests == 2 + LIMITS.recheck_top
 
 
 def test_plan_states_no_credentials_are_sent() -> None:
@@ -169,7 +169,7 @@ def test_verification_shortlist_is_capped_and_ordered() -> None:
         [us_market(i) for i in range(10)],
         DiscoveryLimits(min_score=Decimal("0"), max_results=100),
     )
-    slugs = top_slugs_for_verification(report, DiscoveryLimits(verify_top=3))
+    slugs = top_slugs_for_recheck(report, DiscoveryLimits(recheck_top=3))
     assert len(slugs) <= 3
     assert len(set(slugs)) == len(slugs)
 
@@ -288,7 +288,7 @@ def test_scope_matches_the_documented_initial_test_bounds() -> None:
     assert LIMITS.min_score == Decimal("0.55")
     assert LIMITS.max_per_market == 3
     assert LIMITS.max_results == 100
-    assert LIMITS.verify_top == 25
+    assert LIMITS.recheck_top == 25
 
 
 # ------------------------------------------------- verification and cursors

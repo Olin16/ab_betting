@@ -344,7 +344,7 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
         DiscoveryLimits,
         build_request_plan,
         research_candidates,
-        top_slugs_for_verification,
+        top_slugs_for_recheck,
     )
     from event_arb.persistence.database import Database
 
@@ -354,7 +354,7 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
         min_score=Decimal(str(args.min_score)),
         max_per_market=args.max_per_market,
         max_results=args.max_results,
-        verify_top=args.verify_top,
+        recheck_top=args.recheck_top,
     )
 
     live = settings.data_source is DataSource.LIVE
@@ -422,8 +422,8 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     # Targeted existence recheck. Deliberately narrow: it asks the venue whether the top
     # ids still resolve, and records nothing else. The returned metadata is not used, so
     # this can never be read as having re-validated the candidate itself.
-    if limits.verify_top > 0 and report.records:
-        slugs = top_slugs_for_verification(report, limits)
+    if limits.recheck_top > 0 and report.records:
+        slugs = top_slugs_for_recheck(report, limits)
         refetched = await scanner.adapters[Venue.POLYMARKET].discover_markets(market_ids=slugs)
         confirmed = {m.venue_market_id for m in refetched}
         checked_at = datetime.now(UTC)
@@ -647,7 +647,15 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--min-score", default="0.55")
     discover.add_argument("--max-per-market", type=int, default=3)
     discover.add_argument("--max-results", type=int, default=100)
-    discover.add_argument("--verify-top", type=int, default=25)
+    discover.add_argument(
+        "--recheck-top",
+        type=int,
+        default=25,
+        help=(
+            "ask the venue whether the top N shortlisted ids still resolve. The response "
+            "body is not read, so this is an existence check, not verification."
+        ),
+    )
     discover.add_argument(
         "--authenticated-mode",
         action="store_true",
