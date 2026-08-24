@@ -23,10 +23,24 @@ cp .env.example .env
 .venv/bin/event-arb serve     # dashboard on 127.0.0.1:8000
 ```
 
-`--auto-approve` on `scan`/`paper` is a **demo affordance only**: it approves candidates
-that show no material differences, so the pipeline can be seen end to end. It is not a
-substitute for a human reading both rulebooks, and it deliberately refuses any pair with
-material differences.
+### Seeing the pipeline end to end
+
+`--replay-recorded-reviews` on `scan`/`paper` replays the human reviews recorded in
+`tests/fixtures/recorded_reviews.json`, so an approved pair exists and the confirmed path
+can be demonstrated. It **refuses to run against anything but fixture data**, and the check
+happens before any adapter is built, so a live invocation makes no request at all.
+
+It is not automated approval. It matches exact fixture market ids against reviews a person
+wrote down; it never consults the rule comparison to decide anything, and the recorded
+sources go through the ordinary approval path, which still applies every readiness check
+and still refuses a pair that is not ready.
+
+There was previously an `--auto-approve` flag that turned "the automated rule comparison
+found no material difference" into `manually_approved = True`, and it worked on live data.
+It has been removed. Automated text comparison cannot establish settlement equivalence —
+only a human who has read both rulebooks can — and `tests/unit/test_no_automated_approval.py`
+now asserts at AST level that `matching/approval.py` is the only module in the codebase
+that can set that flag.
 
 With Docker: `docker compose up` starts PostgreSQL, runs migrations, and serves the
 dashboard on port 8000 using fixture data.

@@ -27,6 +27,7 @@ from event_arb.config import (
     Settings,
     get_settings,
 )
+from event_arb.demo_reviews import DemoReviewError
 from event_arb.domain.enums import MatchStatus, Venue
 from event_arb.domain.keys import pair_market_keys
 from event_arb.domain.models import VenueMarket
@@ -52,7 +53,16 @@ def _banner(settings: Settings) -> None:
     print("=" * 78)
 
 
-async def _prepare(settings: Settings, auto_approve: bool) -> Scanner:
+async def _prepare(settings: Settings, replay_recorded_reviews: bool) -> Scanner:
+    # Checked before anything is constructed or fetched. Validating inside the replay step
+    # meant a live run discovered markets first and only then refused — doing the network
+    # work for a command that was never going to be allowed to finish.
+    if replay_recorded_reviews and settings.data_source is not DataSource.FIXTURE:
+        raise DemoReviewError(
+            "--replay-recorded-reviews is fixture-only and this run is configured for "
+            f"{settings.data_source.value} data. Nothing was requested."
+        )
+
     scanner = Scanner(settings)
     await scanner.discover()
     # Pairs first: the book refresh is scoped to the markets those pairs reference.
@@ -60,25 +70,61 @@ async def _prepare(settings: Settings, auto_approve: bool) -> Scanner:
     scanner.generate_pairs(min_score=Decimal("0.4"))
     await scanner.refresh_books()
 
-    if auto_approve:
-        # Demo convenience only: approves every candidate whose automated rule comparison
-        # found no material differences. Real approval is a human reading both rule sets.
-        for pair_id, pair in list(scanner.state.pairs.items()):
-            if pair.status is not MatchStatus.SUGGESTED:
-                continue
-            try:
-                scanner.approve(
-                    pair_id,
-                    approved_by="cli-demo (--auto-approve)",
-                    reviewer_notes=(
-                        "Auto-approved for demonstration only; readiness checks passed."
-                    ),
-                )
-            except ApprovalError:
-                # Not ready. The demo must not manufacture an approval it could not
-                # justify; the pair stays a research candidate.
-                continue
+    if replay_recorded_reviews:
+        _apply_recorded_reviews(scanner)
     return scanner
+
+
+def _apply_recorded_reviews(scanner: Scanner) -> None:
+    """Replay reviews a human already recorded for the fixture corpus.
+
+    This is not automated approval. It does not consult the rule comparison to decide
+    anything; it matches exact fixture market ids against reviews a person wrote down, and
+    hands the recorded sources to the ordinary approval path — which still applies every
+    readiness check, and still refuses if the pair is not ready. See
+    :mod:`event_arb.demo_reviews` for why the old --auto-approve flag was removed.
+    """
+    from event_arb.demo_reviews import load_recorded_reviews
+
+    reviews = load_recorded_reviews(scanner.settings)
+    if not reviews:
+        print("\n  No recorded reviews for this fixture corpus; nothing is approved.")
+        return
+
+    applied = 0
+    for pair_id, pair in list(scanner.state.pairs.items()):
+        if pair.status is not MatchStatus.SUGGESTED:
+            continue
+        match = next(
+            (
+                review
+                for review in reviews
+                if review.matches(
+                    pair.kalshi_market_id,
+                    pair.polymarket_market_id,
+                    pair.polymarket_product.value,
+                )
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        try:
+            scanner.approve(
+                pair_id,
+                approved_by=match.reviewed_by,
+                reviewer_notes=match.notes,
+                kalshi_reviewed_source=match.kalshi_source,
+                polymarket_reviewed_source=match.polymarket_source,
+            )
+        except ApprovalError as exc:
+            # A recorded review does not override readiness. If the pair is not ready, it
+            # stays a research candidate and the reason is printed rather than swallowed.
+            print(f"\n  Recorded review for {pair_id[:12]} not applied: {exc}")
+            continue
+        applied += 1
+
+    print(f"\n  Replayed {applied} recorded fixture review(s). Live data is never eligible.")
 
 
 def _print_scan(scanner: Scanner) -> None:
@@ -142,7 +188,7 @@ def _print_scan(scanner: Scanner) -> None:
 
 async def _cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
     _banner(settings)
-    scanner = await _prepare(settings, args.auto_approve)
+    scanner = await _prepare(settings, args.replay_recorded_reviews)
     _print_scan(scanner)
     await scanner.close()
     return 0
@@ -150,7 +196,7 @@ async def _cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
 
 async def _cmd_paper(settings: Settings, args: argparse.Namespace) -> int:
     _banner(settings)
-    scanner = await _prepare(settings, args.auto_approve)
+    scanner = await _prepare(settings, args.replay_recorded_reviews)
     _print_scan(scanner)
 
     result = scanner.state.last_scan
@@ -197,7 +243,7 @@ async def _cmd_paper(settings: Settings, args: argparse.Namespace) -> int:
 
 async def _cmd_pairs(settings: Settings, args: argparse.Namespace) -> int:
     _banner(settings)
-    scanner = await _prepare(settings, auto_approve=False)
+    scanner = await _prepare(settings, replay_recorded_reviews=False)
     from event_arb.matching.rules_diff import compare_rules
 
     for pair in sorted(scanner.state.pairs.values(), key=lambda p: p.semantic_score, reverse=True):
@@ -591,9 +637,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     for sub in (scan, paper):
         sub.add_argument(
-            "--auto-approve",
+            "--replay-recorded-reviews",
             action="store_true",
-            help="demo only: approve candidate pairs that show no material rule differences",
+            help=(
+                "fixture data only: replay the human reviews recorded in "
+                "tests/fixtures/recorded_reviews.json. Refuses to run against live data."
+            ),
         )
     paper.add_argument(
         "--include-candidates",
@@ -601,7 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also paper-trade unapproved research candidates",
     )
     paper.add_argument("--export", default=None, help="write JSON results to this path")
-    pairs.set_defaults(auto_approve=False)
+    pairs.set_defaults(replay_recorded_reviews=False)
 
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)

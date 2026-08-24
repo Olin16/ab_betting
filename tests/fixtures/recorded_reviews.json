@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "Pre-recorded human reviews for the SYNTHETIC fixture corpus only.",
+    "",
+    "These are not live markets. The ids below name fixture files in this directory, and",
+    "the review recorded against each one is a statement about those synthetic contracts.",
+    "event_arb.demo_reviews refuses to load this file unless the data source is fixtures,",
+    "so nothing here can ever be replayed against a real market.",
+    "",
+    "Adding an entry here is the same commitment as approving in the dashboard: you are",
+    "asserting you read both rulebooks and that the two contracts settle identically off",
+    "the same authority. Do not add a pair you have not read."
+  ],
+  "reviews": [
+    {
+      "kalshi_market_id": "KXFEDDECISION-26SEP-CUT25",
+      "polymarket_market_id": "fed-cuts-25bps-september-2026",
+      "polymarket_product": "polymarket_us",
+      "reviewed_by": "fixture-corpus-author (synthetic data)",
+      "notes": "Synthetic fixture pair. Both legs were written to settle off the same FOMC statement, with identical thresholds and direction, for the acceptance test.",
+      "kalshi_source": {
+        "canonical_id": "FOMC statement",
+        "evidence": "tests/fixtures/kalshi/markets.json - rules_primary for KXFEDDECISION-26SEP-CUT25"
+      },
+      "polymarket_source": {
+        "canonical_id": "FOMC statement",
+        "evidence": "tests/fixtures/polymarket_us/markets.json - resolution text for fed-cuts-25bps-september-2026"
+      }
+    },
+    {
+      "kalshi_market_id": "KXFEDDECISION-26SEP-CUT25",
+      "polymarket_market_id": "0xfed26sepcut25aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "polymarket_product": "polymarket_global",
+      "reviewed_by": "fixture-corpus-author (synthetic data)",
+      "notes": "Synthetic fixture pair for the Global corpus, written to mirror the US entry above.",
+      "kalshi_source": {
+        "canonical_id": "FOMC statement",
+        "evidence": "tests/fixtures/kalshi/markets.json - rules_primary for KXFEDDECISION-26SEP-CUT25"
+      },
+      "polymarket_source": {
+        "canonical_id": "FOMC statement",
+        "evidence": "tests/fixtures/polymarket/markets.json - description for 0xfed26sepcut25..."
+      }
+    }
+  ]
+}
