@@ -56,13 +56,14 @@ REBATE_THRESHOLD = Decimal("0.01")
 
 
 def default_kalshi_fee_config(source: str = "fee-schedule-2026-07 (assumed)") -> FeeConfig:
-    from event_arb.domain.enums import Venue
+    from event_arb.domain.enums import FeePolicy, Venue
 
     return FeeConfig(
         venue=Venue.KALSHI,
         taker_rate=DEFAULT_KALSHI_TAKER_RATE,
         maker_rate=DEFAULT_KALSHI_TAKER_RATE,
         multiplier=Decimal("1"),
+        fee_policy=FeePolicy.KALSHI_CENTICENT_CEIL,
         source=source,
     )
 

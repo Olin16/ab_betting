@@ -34,12 +34,12 @@ from event_arb.domain.enums import (
 )
 from event_arb.domain.models import Opportunity, OrderBook, VenueMarket
 from event_arb.domain.money import CENT_EXP, ONE_DOLLAR, ZERO, ceil_to, quantize_price, quantize_qty
+from event_arb.fees import taker_fee_for
 from event_arb.observability import metrics
 from event_arb.observability.logging import get_logger
 from event_arb.orderbooks.freshness import FreshnessPolicy
 from event_arb.paper.fills import SimulatedOrder, simulate_buy
 from event_arb.venues.kalshi.fees import KalshiOrderFeeAccumulator
-from event_arb.venues.polymarket.fees import taker_fee
 
 __all__ = ["PaperExecutor", "PaperTrade"]
 
@@ -334,7 +334,10 @@ class PaperExecutor:
     def _polymarket_fee_for(self, order: SimulatedOrder, market: VenueMarket) -> Decimal:
         return quantize_price(
             sum(
-                (taker_fee(fill.quantity, fill.price, market.fee_config) for fill in order.fills),
+                (
+                    taker_fee_for(fill.quantity, fill.price, market.fee_config)
+                    for fill in order.fills
+                ),
                 ZERO,
             )
         )
@@ -361,6 +364,10 @@ def settle(
     total_payout = hedged_payout + unhedged_payout
     final_pnl = total_payout - trade.total_cost - trade.total_fees
 
+    # Read the assets off the opportunity's legs rather than assuming a product.
+    kalshi_asset = trade.opportunity.kalshi_leg.settlement_asset
+    polymarket_asset = trade.opportunity.polymarket_leg.settlement_asset
+
     trade.settlement_result = {
         "winning_outcome": winning_outcome.value,
         "hedged_payout": str(quantize_price(hedged_payout)),
@@ -368,19 +375,32 @@ def settle(
         "total_payout": str(quantize_price(total_payout)),
         "final_pnl": str(quantize_price(final_pnl)),
         "unhedged_venue": unhedged_venue.value if unhedged_venue else None,
-        # USDC-denominated proceeds are not USD until converted.
-        "usdc_denominated_payout": str(
+        # Settlement assets are read from the legs, not assumed. Polymarket US settles in
+        # USD and Polymarket Global in USDC, so hardcoding either misreports one of them.
+        "kalshi_settlement_asset": kalshi_asset.value,
+        "polymarket_settlement_asset": polymarket_asset.value,
+        "settlement_assets_differ": kalshi_asset is not polymarket_asset,
+    }
+
+    if polymarket_asset is SettlementAsset.USDC:
+        # Only the Global path carries conversion and depeg exposure.
+        trade.settlement_result["usdc_denominated_payout"] = str(
             quantize_price(
                 trade.hedged_quantity * ONE_DOLLAR
                 if trade.leg2 and trade.leg2.outcome is winning_outcome
                 else ZERO
             )
-        ),
-        "settlement_asset_note": (
+        )
+        trade.settlement_result["settlement_asset_note"] = (
             f"Polymarket proceeds settle in {SettlementAsset.USDC.value}, "
-            f"Kalshi in {SettlementAsset.USD.value}"
-        ),
-    }
+            f"Kalshi in {kalshi_asset.value}; conversion and depeg risk apply"
+        )
+    else:
+        trade.settlement_result["settlement_asset_note"] = (
+            f"Both legs settle in {polymarket_asset.value}; "
+            "no cross-asset conversion or depeg exposure"
+        )
+
     trade.status = PaperTradeStatus.SETTLED
     trade.settled_at = settled_at or datetime.now(UTC)
     return trade

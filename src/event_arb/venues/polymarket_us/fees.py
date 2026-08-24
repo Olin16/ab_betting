@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from event_arb.domain.enums import Venue
+from event_arb.domain.enums import FeePolicy, Venue
 from event_arb.domain.models import FeeConfig
 from event_arb.domain.money import CENT_EXP, ZERO, round_half_even_to
 
@@ -69,6 +69,7 @@ def polymarket_us_fee_config(
     """
     return FeeConfig(
         venue=Venue.POLYMARKET,
+        fee_policy=FeePolicy.POLYMARKET_US_BANKERS_CENT,
         taker_rate=TAKER_THETA if taker_theta is None else taker_theta,
         # Makers are not *charged*; they are paid. The charge is zero.
         maker_rate=ZERO,

@@ -15,6 +15,8 @@ import pytest
 
 from event_arb.config import (
     OpportunitySettings,
+    PolymarketProduct,
+    PolymarketSettings,
     Settings,
     TrialSettings,
     WatchedPair,
@@ -39,6 +41,9 @@ class CountingAdapter(FixtureAdapter):
 
 def build(fixture_dir: Path, trial: TrialSettings | None = None) -> tuple[Scanner, dict]:
     settings = Settings(
+        # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
+        # clearly separated from the Polymarket US fixtures and tests.
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
         fixture_dir=fixture_dir,
         trial=trial or TrialSettings(),
         opportunity=OpportunitySettings(max_book_age_ms=60_000, max_quantity=Decimal("100")),
@@ -223,6 +228,9 @@ class DiscoveryCountingAdapter(CountingAdapter):
 
 def build_discovery(fixture_dir: Path, trial: TrialSettings | None = None):  # type: ignore[no-untyped-def]
     settings = Settings(
+        # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
+        # clearly separated from the Polymarket US fixtures and tests.
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
         fixture_dir=fixture_dir,
         trial=trial or TrialSettings(),
         opportunity=OpportunitySettings(max_book_age_ms=60_000, max_quantity=Decimal("100")),

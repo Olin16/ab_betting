@@ -183,6 +183,9 @@ def generate_candidates(
                 id=pair_id_for(kalshi.venue_market_id, polymarket.venue_market_id),
                 kalshi_market_id=kalshi.venue_market_id,
                 polymarket_market_id=polymarket.venue_market_id,
+                # Carried from the market itself, never defaulted: a pair that forgot its
+                # product could later be restored against the other one.
+                polymarket_product=polymarket.product,
                 status=MatchStatus.SUGGESTED,
                 semantic_score=score.score,
                 manually_approved=False,

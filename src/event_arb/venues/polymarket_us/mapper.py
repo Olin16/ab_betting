@@ -27,7 +27,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 
-from event_arb.domain.enums import Outcome, SettlementAsset, Venue
+from event_arb.domain.enums import Outcome, SettlementAsset, Venue, VenueProduct
 from event_arb.domain.models import (
     BookLevel,
     FeeConfig,
@@ -325,5 +325,6 @@ def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -
         is_tradable=(is_open and completeness is RulesCompleteness.LIKELY_COMPLETE),
         # USD, not USDC. No haircut, no depeg, no Polygon.
         settlement_asset=SettlementAsset.USD,
+        product=VenueProduct.POLYMARKET_US,
         raw_metadata=metadata,
     )

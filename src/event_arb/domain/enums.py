@@ -8,6 +8,7 @@ __all__ = [
     "AlertChannel",
     "ArbDirection",
     "ComparisonOperator",
+    "FeePolicy",
     "MatchStatus",
     "OpportunityLabel",
     "Outcome",
@@ -16,6 +17,7 @@ __all__ = [
     "RiskFlag",
     "SettlementAsset",
     "Venue",
+    "VenueProduct",
 ]
 
 
@@ -31,6 +33,44 @@ class Outcome(StrEnum):
     @property
     def opposite(self) -> Outcome:
         return Outcome.NO if self is Outcome.YES else Outcome.YES
+
+
+class VenueProduct(StrEnum):
+    """A distinct product within a venue brand.
+
+    Polymarket Global (Adventure One QSS) and Polymarket US (QCX LLC) share a brand but are
+    different venues: different operators, hosts, identifiers, settlement assets, fee models
+    and terms. Collapsing both into ``Venue.POLYMARKET`` made the persisted uniqueness
+    constraint stop meaning "one row per market on one venue", and left nothing to stop a
+    US-configured scanner requesting a leftover Global market id.
+
+    ``NONE`` is for venues that have exactly one product, such as Kalshi.
+    """
+
+    NONE = "none"
+    POLYMARKET_GLOBAL = "polymarket_global"
+    POLYMARKET_US = "polymarket_us"
+
+    @property
+    def is_polymarket(self) -> bool:
+        return self in {VenueProduct.POLYMARKET_GLOBAL, VenueProduct.POLYMARKET_US}
+
+
+class FeePolicy(StrEnum):
+    """How a venue computes and rounds fees.
+
+    Carried explicitly on :class:`~event_arb.domain.models.FeeConfig` rather than inferred
+    from :class:`Venue`, because two Polymarket products share a venue value and round
+    incompatibly: Global ceils to five decimals, US uses banker's rounding to the cent.
+    Inferring from the venue would silently apply the wrong one.
+
+    ``UNKNOWN`` never prices anything; the dispatcher refuses it.
+    """
+
+    KALSHI_CENTICENT_CEIL = "kalshi_centicent_ceil"
+    POLYMARKET_GLOBAL_5DP_CEIL = "polymarket_global_5dp_ceil"
+    POLYMARKET_US_BANKERS_CENT = "polymarket_us_bankers_cent"
+    UNKNOWN = "unknown"
 
 
 class SettlementAsset(StrEnum):

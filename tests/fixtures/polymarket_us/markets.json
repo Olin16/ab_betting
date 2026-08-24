@@ -1,36 +1,104 @@
 {
-  "data": [
+  "_synthetic": "Deliberately synthetic. NOT an asserted live mapping. Shapes follow payloads recorded 2026-08-23 from the public gateway.",
+  "markets": [
     {
-      "id": "pmus-fed-26sep-cut25",
+      "id": "9001",
       "slug": "fed-cuts-25bps-september-2026",
       "question": "Fed cuts rates by 25 bps in September 2026?",
-      "description": "This market will resolve to Yes if the Federal Open Market Committee announces a decrease of exactly 25 basis points to the federal funds target range at its meeting concluding on September 17, 2026, as published in the official FOMC statement. If the meeting is postponed beyond September 30, 2026, this market will settle to No. Revisions issued after the initial statement do not change settlement. The official source for resolution is the Federal Reserve FOMC statement.",
-      "category": "Economics",
-      "active": true, "closed": false, "archived": false,
+      "description": "This market will resolve to Yes if the Federal Open Market Committee announces a decrease of exactly 25 basis points to the federal funds target range at its meeting concluding on September 17, 2026, as published in the official FOMC statement. If the meeting is postponed beyond September 30, 2026, this market will settle to No. Revisions issued after the initial statement do not change settlement.",
+      "category": "economics",
+      "active": true,
+      "closed": false,
+      "archived": false,
+      "status": "MARKET_STATUS_OPEN",
       "endDate": "2026-09-17T18:00:00Z",
       "resolutionSource": "Federal Reserve FOMC statement",
-      "orderPriceMinTickSize": "0.01",
-      "minimumTradeQty": "1",
-      "bestBid": "0.62", "bestAsk": "0.64", "lastTradePrice": "0.63"
+      "orderPriceMinTickSize": 0.001,
+      "minimumTradeQty": 1,
+      "feeCoefficient": 0.06,
+      "outcomes": "[\"Yes\",\"No\"]",
+      "bestBidQuote": {
+        "value": "0.360",
+        "currency": "USD"
+      },
+      "bestAskQuote": {
+        "value": "0.380",
+        "currency": "USD"
+      },
+      "marketSides": [
+        {
+          "id": "1",
+          "identifier": "fed-cuts-25bps-september-2026",
+          "description": "Yes",
+          "long": true
+        },
+        {
+          "id": "2",
+          "identifier": "fed-cuts-25bps-september-2026-no",
+          "description": "No",
+          "long": false
+        }
+      ]
     },
     {
-      "id": "pmus-thin-rules",
+      "id": "9002",
+      "slug": "nyc-high-temp-aug-22-2026",
+      "question": "Will NYC hit 90F or higher on August 22, 2026?",
+      "description": "This market will resolve to Yes if the maximum temperature recorded at the National Weather Service Central Park station on August 22, 2026 is greater than or equal to 90 degrees Fahrenheit. Resolution uses the final corrected monthly climate report published by NOAA, not the preliminary daily report.",
+      "category": "weather",
+      "active": true,
+      "closed": false,
+      "archived": false,
+      "status": "MARKET_STATUS_OPEN",
+      "endDate": "2026-08-23T04:00:00Z",
+      "resolutionSource": "NOAA final monthly climate report",
+      "orderPriceMinTickSize": 0.001,
+      "minimumTradeQty": 1,
+      "feeCoefficient": 0.06,
+      "outcomes": "[\"Yes\",\"No\"]",
+      "marketSides": [
+        {
+          "id": "3",
+          "identifier": "nyc-high-temp-aug-22-2026",
+          "description": "Yes",
+          "long": true
+        },
+        {
+          "id": "4",
+          "identifier": "nyc-high-temp-aug-22-2026-no",
+          "description": "No",
+          "long": false
+        }
+      ]
+    },
+    {
+      "id": "9003",
       "slug": "market-with-thin-rules",
       "question": "Will something happen?",
       "description": "A market about something.",
-      "category": "Other",
-      "active": true, "closed": false, "archived": false,
+      "category": "other",
+      "active": true,
+      "closed": false,
+      "archived": false,
+      "status": "MARKET_STATUS_OPEN",
       "endDate": "2026-12-01T00:00:00Z",
-      "orderPriceMinTickSize": "0.01",
-      "minimumTradeQty": "1"
+      "orderPriceMinTickSize": 0.001,
+      "minimumTradeQty": 1,
+      "feeCoefficient": 0.06,
+      "outcomes": "[\"Yes\",\"No\"]"
     },
     {
-      "id": "pmus-no-rules",
+      "id": "9004",
       "slug": "market-with-no-rules",
       "question": "Another question?",
-      "active": true, "closed": false, "archived": false,
-      "orderPriceMinTickSize": "0.01",
-      "minimumTradeQty": "1"
+      "active": true,
+      "closed": false,
+      "archived": false,
+      "status": "MARKET_STATUS_OPEN",
+      "orderPriceMinTickSize": 0.001,
+      "minimumTradeQty": 1,
+      "feeCoefficient": 0.06,
+      "outcomes": "[\"Yes\",\"No\"]"
     }
   ]
 }

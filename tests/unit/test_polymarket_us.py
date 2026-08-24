@@ -130,7 +130,7 @@ def test_market_settles_in_usd_not_usdc() -> None:
     """No haircut, no depeg, no Polygon: this is the whole point of the US product."""
     payload = load("markets.json")
     assert isinstance(payload, dict)
-    market = parse_market(payload["data"][0])
+    market = parse_market(payload["markets"][0])
     assert market.settlement_asset is SettlementAsset.USD
     assert market.venue_market_id == "fed-cuts-25bps-september-2026"
 
@@ -138,15 +138,16 @@ def test_market_settles_in_usd_not_usdc() -> None:
 def test_market_records_the_product_discriminator() -> None:
     payload = load("markets.json")
     assert isinstance(payload, dict)
-    market = parse_market(payload["data"][0])
+    market = parse_market(payload["markets"][0])
     assert market.raw_metadata["_product"] == PRODUCT
 
 
 def test_tick_size_and_minimum_quantity_are_carried_through() -> None:
     payload = load("markets.json")
     assert isinstance(payload, dict)
-    market = parse_market(payload["data"][0])
-    assert market.tick_size == Decimal("0.01")
+    market = parse_market(payload["markets"][0])
+    # Real US markets are finer than a penny; the recorded payload shows 0.001.
+    assert market.tick_size == Decimal("0.001")
     assert market.min_quantity_increment == Decimal("1")
 
 
@@ -165,7 +166,7 @@ def test_rules_completeness_classification(text: str, expected: RulesCompletenes
 def test_full_rules_text_is_recognised_as_likely_complete() -> None:
     payload = load("markets.json")
     assert isinstance(payload, dict)
-    assert rules_completeness(payload["data"][0]["description"]) is (
+    assert rules_completeness(payload["markets"][0]["description"]) is (
         RulesCompleteness.LIKELY_COMPLETE
     )
 
@@ -179,8 +180,8 @@ def test_market_without_usable_rules_is_not_tradable() -> None:
     """
     payload = load("markets.json")
     assert isinstance(payload, dict)
-    thin = parse_market(payload["data"][1])
-    missing = parse_market(payload["data"][2])
+    thin = parse_market(payload["markets"][2])
+    missing = parse_market(payload["markets"][3])
     assert thin.is_tradable is False
     assert missing.is_tradable is False
     assert thin.raw_metadata["_rules_completeness"] == "insufficient"
@@ -190,16 +191,16 @@ def test_market_without_usable_rules_is_not_tradable() -> None:
 def test_complete_market_is_tradable() -> None:
     payload = load("markets.json")
     assert isinstance(payload, dict)
-    assert parse_market(payload["data"][0]).is_tradable is True
+    assert parse_market(payload["markets"][0]).is_tradable is True
 
 
 def test_book_parses_bids_and_offers_with_px_qty() -> None:
     payload = load("books/fed-cuts-25bps-september-2026.json")
     assert isinstance(payload, dict)
     book = parse_book("slug", payload)
-    assert book.yes.bids[0].price == Decimal("0.62")
-    assert book.yes.asks[0].price == Decimal("0.64")
-    assert book.yes.asks[0].quantity == Decimal("250")
+    assert book.yes.bids[0].price == Decimal("0.360")
+    assert book.yes.asks[0].price == Decimal("0.380")
+    assert book.yes.asks[0].quantity == Decimal("300")
     assert book.venue is Venue.POLYMARKET
 
 
@@ -207,15 +208,11 @@ def test_book_depth_is_ordered_best_first() -> None:
     payload = load("books/fed-cuts-25bps-september-2026.json")
     assert isinstance(payload, dict)
     book = parse_book("slug", payload)
-    assert [level.price for level in book.yes.bids] == [
-        Decimal("0.62"),
-        Decimal("0.61"),
-        Decimal("0.60"),
-    ]
+    assert [level.price for level in book.yes.bids] == [Decimal("0.360"), Decimal("0.358")]
     assert [level.price for level in book.yes.asks] == [
-        Decimal("0.64"),
-        Decimal("0.65"),
-        Decimal("0.67"),
+        Decimal("0.380"),
+        Decimal("0.385"),
+        Decimal("0.392"),
     ]
 
 

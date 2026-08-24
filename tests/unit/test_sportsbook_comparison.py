@@ -12,7 +12,13 @@ from hypothesis import given
 from hypothesis import settings as hyp_settings
 from hypothesis import strategies as st
 
-from event_arb.domain.enums import Outcome, RejectionReason, SettlementAsset, Venue
+from event_arb.domain.enums import (
+    FeePolicy,
+    Outcome,
+    RejectionReason,
+    SettlementAsset,
+    Venue,
+)
 from event_arb.domain.models import BookLevel, FeeConfig, OrderBook, OrderBookSide, VenueMarket
 from event_arb.sportsbook.comparison import (
     SportsbookComparison,
@@ -408,7 +414,11 @@ def test_non_usd_exchange_settlement_is_charged_a_haircut() -> None:
             market(
                 venue=Venue.POLYMARKET,
                 settlement_asset=SettlementAsset.USDC,
-                fee_config=FeeConfig(venue=Venue.POLYMARKET, taker_rate=Decimal("0")),
+                fee_config=FeeConfig(
+                    venue=Venue.POLYMARKET,
+                    taker_rate=Decimal("0"),
+                    fee_policy=FeePolicy.POLYMARKET_GLOBAL_5DP_CEIL,
+                ),
             ),
             Outcome.NO,
             charged,

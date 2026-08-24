@@ -19,6 +19,8 @@ from event_arb.config import (
     AlertSettings,
     OpportunitySettings,
     PaperSettings,
+    PolymarketProduct,
+    PolymarketSettings,
     Settings,
     TrialSettings,
     WatchedPair,
@@ -46,6 +48,9 @@ def make_settings(fixture_dir: Path, **trial_overrides: object) -> Settings:
         **trial_overrides,  # type: ignore[arg-type]
     )
     return Settings(
+        # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
+        # clearly separated from the Polymarket US fixtures and tests.
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
         fixture_dir=fixture_dir,
         trial=trial,
         # No simulated network delay: these tests assert orchestration, not latency.

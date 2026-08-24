@@ -354,6 +354,6 @@ def _exchange_fees(quantity: Decimal, price: Decimal, market: VenueMarket) -> De
         accumulator = KalshiOrderFeeAccumulator(config=market.fee_config)
         return accumulator.charge_fill(quantity, price).net
 
-    from event_arb.venues.polymarket.fees import taker_fee
+    from event_arb.fees import taker_fee_for
 
-    return taker_fee(quantity, price, market.fee_config)
+    return taker_fee_for(quantity, price, market.fee_config)

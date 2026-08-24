@@ -17,7 +17,13 @@ from decimal import Decimal
 
 import pytest
 
-from event_arb.config import OpportunitySettings, PaperSettings, Settings
+from event_arb.config import (
+    OpportunitySettings,
+    PaperSettings,
+    PolymarketProduct,
+    PolymarketSettings,
+    Settings,
+)
 from event_arb.domain.enums import (
     MatchStatus,
     OpportunityLabel,
@@ -45,6 +51,9 @@ def scanner(fixture_dir: object) -> Scanner:
 
     assert isinstance(fixture_dir, Path)
     settings = Settings(
+        # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
+        # clearly separated from the Polymarket US fixtures and tests.
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
         fixture_dir=fixture_dir,
         opportunity=OpportunitySettings(
             min_net_profit_usd=Decimal("0.50"),

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from event_arb.config import Settings
+from event_arb.config import PolymarketProduct, PolymarketSettings, Settings
 from event_arb.domain.enums import Venue
 from event_arb.venues.fixture import FixtureAdapter
 
@@ -42,4 +42,17 @@ def polymarket_adapter() -> FixtureAdapter:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(fixture_dir=FIXTURE_DIR)
+    # Legacy Polymarket **Global** corpus; the US path has its own settings fixture.
+    return Settings(
+        fixture_dir=FIXTURE_DIR,
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
+    )
+
+
+@pytest.fixture
+def us_settings() -> Settings:
+    """Settings selecting the Polymarket **US** product and its fixture corpus."""
+    return Settings(
+        fixture_dir=FIXTURE_DIR,
+        polymarket=PolymarketSettings(product=PolymarketProduct.US),
+    )

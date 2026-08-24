@@ -21,23 +21,38 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from event_arb.domain.enums import Venue
+from event_arb.domain.enums import Venue, VenueProduct
 from event_arb.domain.models import OrderBook, VenueMarket
 from event_arb.venues.base import MarketDataError, StreamEvent, VenueAdapter
 from event_arb.venues.kalshi.mapper import parse_market as parse_kalshi_market
 from event_arb.venues.kalshi.mapper import parse_orderbook as parse_kalshi_book
 from event_arb.venues.polymarket.mapper import build_book as build_poly_book
 from event_arb.venues.polymarket.mapper import parse_market as parse_poly_market
+from event_arb.venues.polymarket_us.mapper import parse_book as parse_us_book
+from event_arb.venues.polymarket_us.mapper import parse_market as parse_us_market
 
 __all__ = ["FixtureAdapter", "load_json"]
 
 
+def _fixture_subdir(venue: Venue, product: VenueProduct) -> str:
+    if venue is Venue.KALSHI:
+        return "kalshi"
+    return "polymarket_us" if product is VenueProduct.POLYMARKET_US else "polymarket"
+
+
 def load_json(path: Path) -> Any:
+    """Load a fixture keeping every number exact.
+
+    ``parse_float=Decimal`` mirrors the live clients. Without it a fixture price becomes a
+    binary float at load time, which both defeats the Decimal discipline and diverges from
+    the code path the fixture is supposed to be exercising.
+    """
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(), parse_float=Decimal)
     except FileNotFoundError as exc:
         raise MarketDataError(f"fixture not found: {path}") from exc
     except ValueError as exc:
@@ -47,9 +62,19 @@ def load_json(path: Path) -> Any:
 class FixtureAdapter(VenueAdapter):
     """Replays recorded payloads as if they came from the venue."""
 
-    def __init__(self, venue: Venue, fixture_dir: Path, frame_interval: float = 0.0) -> None:
+    def __init__(
+        self,
+        venue: Venue,
+        fixture_dir: Path,
+        frame_interval: float = 0.0,
+        product: VenueProduct = VenueProduct.POLYMARKET_GLOBAL,
+    ) -> None:
         super().__init__(venue)
-        self._dir = fixture_dir / ("kalshi" if venue is Venue.KALSHI else "polymarket")
+        # Product selects the corpus: Polymarket US payloads differ from Global ones in
+        # schema, identifiers and settlement asset, so serving one while configured for
+        # the other would test the wrong adapter entirely.
+        self._product = product
+        self._dir = fixture_dir / _fixture_subdir(venue, product)
         self._frame_interval = frame_interval
         #: Overrides the receipt timestamp so tests can synthesize stale books.
         self.received_at_override: datetime | None = None
@@ -76,6 +101,8 @@ class FixtureAdapter(VenueAdapter):
         received = self.received_at_override or datetime.now(UTC)
         if self.venue is Venue.KALSHI:
             book = parse_kalshi_book(market_id, frame, received_at=received)
+        elif self._product is VenueProduct.POLYMARKET_US:
+            book = parse_us_book(market_id, frame, received_at=received)
         else:
             yes = frame.get("yes")
             if not isinstance(yes, dict):
@@ -107,7 +134,12 @@ class FixtureAdapter(VenueAdapter):
         if not isinstance(entries, list):
             raise MarketDataError(f"{self.venue.value} markets fixture is not a list")
 
-        parse = parse_kalshi_market if self.venue is Venue.KALSHI else parse_poly_market
+        if self.venue is Venue.KALSHI:
+            parse = parse_kalshi_market
+        elif self._product is VenueProduct.POLYMARKET_US:
+            parse = parse_us_market
+        else:
+            parse = parse_poly_market
         markets = [parse(entry) for entry in entries if isinstance(entry, dict)]
         if market_ids:
             wanted = set(market_ids)

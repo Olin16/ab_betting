@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from event_arb.config import DataSource, PolymarketProduct, Settings
-from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.enums import MatchStatus, Venue, VenueProduct
 from event_arb.domain.models import MarketPair, Opportunity, OrderBook, VenueMarket
 from event_arb.matching.approval import approve_pair
 from event_arb.matching.candidates import generate_candidates, pair_id_for
@@ -54,9 +54,16 @@ def build_adapters(settings: Settings) -> dict[Venue, VenueAdapter]:
     Fixture mode is the default and requires no credentials or network access.
     """
     if settings.data_source is DataSource.FIXTURE:
+        product = (
+            VenueProduct.POLYMARKET_US
+            if settings.polymarket.product is PolymarketProduct.US
+            else VenueProduct.POLYMARKET_GLOBAL
+        )
         return {
-            Venue.KALSHI: FixtureAdapter(Venue.KALSHI, settings.fixture_dir),
-            Venue.POLYMARKET: FixtureAdapter(Venue.POLYMARKET, settings.fixture_dir),
+            Venue.KALSHI: FixtureAdapter(Venue.KALSHI, settings.fixture_dir, product=product),
+            Venue.POLYMARKET: FixtureAdapter(
+                Venue.POLYMARKET, settings.fixture_dir, product=product
+            ),
         }
 
     settings.validate_live_market_data()
@@ -134,6 +141,26 @@ class Scanner:
 
     # ------------------------------------------------------------------ discovery
 
+    @property
+    def polymarket_product(self) -> VenueProduct:
+        """The Polymarket product this scanner is configured for."""
+        return (
+            VenueProduct.POLYMARKET_US
+            if self.settings.polymarket.product is PolymarketProduct.US
+            else VenueProduct.POLYMARKET_GLOBAL
+        )
+
+    def _product_matches(self, market: VenueMarket) -> bool:
+        """Runtime guard against mixing products in one process.
+
+        Markets are keyed by ``(Venue, market_id)`` in memory, which cannot distinguish two
+        Polymarket products. A database carrying leftover Global rows would otherwise have a
+        US-configured scanner request Global market ids through the US adapter.
+        """
+        if market.venue is not Venue.POLYMARKET:
+            return True
+        return market.product is self.polymarket_product
+
     async def discover(self, market_ids: dict[Venue, list[str]] | None = None) -> list[VenueMarket]:
         """Load market metadata into scanner state.
 
@@ -157,6 +184,14 @@ class Scanner:
                 log.error("scanner.discovery_failed", venue=venue.value, error=str(exc))
                 continue
             for market in markets:
+                if not self._product_matches(market):
+                    log.warning(
+                        "scanner.product_mismatch_discarded",
+                        market_id=market.venue_market_id,
+                        market_product=market.product.value,
+                        configured_product=self.polymarket_product.value,
+                    )
+                    continue
                 key = (venue, market.venue_market_id)
                 self.state.markets[key] = market
                 self.state.observed_markets.add(key)
@@ -277,6 +312,7 @@ class Scanner:
                 status=MatchStatus.UNDER_REVIEW,
                 manually_approved=False,
                 outcomes_inverted=watched.outcomes_inverted,
+                polymarket_product=self.polymarket_product,
                 reviewer_notes=watched.note or "seeded from trial.watched_pairs configuration",
             )
             self.state.pairs[pair_id] = pair
@@ -379,7 +415,12 @@ class Scanner:
         async with self._db_lock, self.database.session() as session:
             repository = OrderBookSnapshotRepository(session)
             for book in books:
-                await repository.record(book)
+                product = (
+                    self.polymarket_product.value
+                    if book.venue is Venue.POLYMARKET
+                    else VenueProduct.NONE.value
+                )
+                await repository.record(book, product=product)
 
     # --------------------------------------------------------------- paper trading
 
@@ -472,6 +513,11 @@ class Scanner:
             stored_markets = await VenueMarketRepository(session).load_all()
             stored_pairs = await MarketPairRepository(session).load_all()
 
+        # Stored rows may predate a product switch, so drop anything for the other
+        # product before merging: restoring it would let a Global market answer a US key.
+        stored_markets = {
+            key: market for key, market in stored_markets.items() if self._product_matches(market)
+        }
         # Live metadata wins over stored metadata: discovery may already have run.
         merged_markets = {**stored_markets, **self.state.markets}
         self.state.markets = merged_markets

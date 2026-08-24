@@ -24,7 +24,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.enums import MatchStatus, Venue, VenueProduct
 from event_arb.domain.models import (
     FeeConfig,
     MarketPair,
@@ -80,11 +80,14 @@ class VenueMarketRepository:
         existing = await self._session.scalar(
             select(VenueMarketRow).where(
                 VenueMarketRow.venue == market.venue.value,
+                VenueMarketRow.product == market.product.value,
                 VenueMarketRow.venue_market_id == market.venue_market_id,
             )
         )
         row = existing or VenueMarketRow(
-            venue=market.venue.value, venue_market_id=market.venue_market_id
+            venue=market.venue.value,
+            product=market.product.value,
+            venue_market_id=market.venue_market_id,
         )
         row.title = market.title
         row.rules_text = market.rules_text
@@ -93,6 +96,7 @@ class VenueMarketRepository:
         row.close_time = market.close_time
         row.settlement_source = market.settlement_source
         row.settlement_asset = market.settlement_asset.value
+        row.settlement_deadline = market.settlement_deadline
         row.tick_size = market.tick_size
         row.fee_taker_rate = market.fee_config.taker_rate
         row.fee_maker_rate = market.fee_config.maker_rate
@@ -137,6 +141,8 @@ class VenueMarketRepository:
             is_active=row.is_active,
             is_tradable=row.is_tradable,
             settlement_asset=SettlementAsset(row.settlement_asset),
+            product=VenueProduct(row.product),
+            settlement_deadline=row.settlement_deadline,
             raw_metadata=dict(row.raw_metadata or {}),
             last_updated=row.last_updated,
         )
@@ -156,6 +162,7 @@ class MarketPairRepository:
         row = existing or MarketPairRow(id=pair.id)
         row.kalshi_market_id = pair.kalshi_market_id
         row.polymarket_market_id = pair.polymarket_market_id
+        row.polymarket_product = pair.polymarket_product.value
         row.status = pair.status.value
         row.semantic_score = pair.semantic_score
         row.manually_approved = pair.manually_approved
@@ -187,6 +194,7 @@ class MarketPairRepository:
             id=row.id,
             kalshi_market_id=row.kalshi_market_id,
             polymarket_market_id=row.polymarket_market_id,
+            polymarket_product=VenueProduct(row.polymarket_product),
             status=MatchStatus(row.status),
             semantic_score=row.semantic_score,
             manually_approved=row.manually_approved,
@@ -292,10 +300,11 @@ class OrderBookSnapshotRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def record(self, book: OrderBook) -> None:
+    async def record(self, book: OrderBook, product: str = "none") -> None:
         self._session.add(
             OrderBookSnapshotRow(
                 venue=book.venue.value,
+                product=product,
                 market_id=book.market_id,
                 payload=_json_safe(json.loads(book.model_dump_json())),
                 exchange_timestamp=book.exchange_timestamp,

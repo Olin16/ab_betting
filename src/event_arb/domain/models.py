@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from event_arb.domain.enums import (
     ArbDirection,
     ComparisonOperator,
+    FeePolicy,
     MatchStatus,
     OpportunityLabel,
     Outcome,
@@ -23,6 +24,7 @@ from event_arb.domain.enums import (
     RiskFlag,
     SettlementAsset,
     Venue,
+    VenueProduct,
 )
 from event_arb.domain.money import ZERO, quantize_price, quantize_qty
 
@@ -54,7 +56,7 @@ def _utcnow() -> datetime:
 #: Bump when the set of fields below changes. A bump invalidates every stored approval,
 #: forcing re-review — which is the point: an old approval was granted against a weaker
 #: definition of "unchanged".
-SETTLEMENT_FINGERPRINT_VERSION = "v2"
+SETTLEMENT_FINGERPRINT_VERSION = "v3"
 
 
 def rules_hash(*parts: str | None) -> str:
@@ -109,6 +111,9 @@ class FeeConfig(_Frozen):
     maker_rebate_rate: Decimal = ZERO
     #: Kalshi per-series multiplier ``M`` in ``ceil(M * 0.07 * C * P * (1-P))``.
     multiplier: Decimal = Decimal("1")
+    #: How fees are computed and rounded. Explicit, never inferred from ``venue``: two
+    #: Polymarket products share a venue value and round incompatibly.
+    fee_policy: FeePolicy = FeePolicy.UNKNOWN
     #: Source of these numbers, for auditing. Never trust an undocumented default.
     source: str = "default"
 
@@ -138,6 +143,12 @@ class VenueMarket(_Frozen):
     is_active: bool = True
     is_tradable: bool = True
     settlement_asset: SettlementAsset = SettlementAsset.USD
+    #: Which product within the venue brand. Part of the settlement fingerprint, so a
+    #: Global approval can never validate against a US market.
+    product: VenueProduct = VenueProduct.NONE
+    #: Latest instant by which the venue must settle. ``None`` means the venue did not
+    #: publish one, which is material at approval time rather than a harmless gap.
+    settlement_deadline: datetime | None = None
     raw_metadata: dict[str, object] = Field(default_factory=dict)
     last_updated: datetime = Field(default_factory=_utcnow)
 
@@ -167,6 +178,10 @@ class VenueMarket(_Frozen):
             "|".join(self.outcomes),
             # USD and USDC do not settle alike.
             self.settlement_asset.value,
+            # Two products sharing a venue brand are different contracts.
+            self.product.value,
+            # A different settlement deadline is a different capital lockup.
+            self.settlement_deadline.isoformat() if self.settlement_deadline else None,
         )
 
     @property
@@ -197,6 +212,9 @@ class MarketPair(_Frozen):
     manually_approved: bool = False
     reviewer_notes: str = ""
     rule_differences: tuple[RuleDifference, ...] = ()
+    #: Which Polymarket product this pair's second leg refers to. Conservative default:
+    #: pairs predating product identity are Global.
+    polymarket_product: VenueProduct = VenueProduct.POLYMARKET_GLOBAL
     kalshi_rules_hash_at_approval: str | None = None
     polymarket_rules_hash_at_approval: str | None = None
     approved_at: datetime | None = None

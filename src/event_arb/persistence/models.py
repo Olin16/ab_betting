@@ -73,12 +73,16 @@ class Base(DeclarativeBase):
 class VenueMarketRow(Base):
     __tablename__ = "venue_markets"
     __table_args__ = (
-        UniqueConstraint("venue", "venue_market_id", name="uq_venue_market"),
+        # Product is part of market identity: two Polymarket products share a venue
+        # value, so (venue, market_id) alone stopped meaning "one row per market".
+        UniqueConstraint("venue", "product", "venue_market_id", name="uq_venue_market"),
         Index("ix_venue_markets_close_time", "close_time"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     venue: Mapped[str] = mapped_column(String(32))
+    #: VenueProduct value. "none" for single-product venues such as Kalshi.
+    product: Mapped[str] = mapped_column(String(32), default="none")
     venue_market_id: Mapped[str] = mapped_column(String(255))
     title: Mapped[str] = mapped_column(Text)
     rules_text: Mapped[str] = mapped_column(Text, default="")
@@ -87,6 +91,7 @@ class VenueMarketRow(Base):
     close_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     settlement_source: Mapped[str] = mapped_column(Text, default="")
     settlement_asset: Mapped[str] = mapped_column(String(8), default="USD")
+    settlement_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     tick_size: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0.01"))
     fee_taker_rate: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
     fee_maker_rate: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
@@ -105,6 +110,9 @@ class MarketPairRow(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     kalshi_market_id: Mapped[str] = mapped_column(String(255))
     polymarket_market_id: Mapped[str] = mapped_column(String(255))
+    #: Which Polymarket product the second leg refers to. Rows predating product identity
+    #: backfill to Global, the conservative reading.
+    polymarket_product: Mapped[str] = mapped_column(String(32), default="polymarket_global")
     status: Mapped[str] = mapped_column(String(32), default="suggested")
     semantic_score: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
     manually_approved: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -128,6 +136,7 @@ class OrderBookSnapshotRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     venue: Mapped[str] = mapped_column(String(32))
+    product: Mapped[str] = mapped_column(String(32), default="none")
     market_id: Mapped[str] = mapped_column(String(255))
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     exchange_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

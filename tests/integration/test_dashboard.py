@@ -10,13 +10,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from event_arb.api.app import create_app
-from event_arb.config import OpportunitySettings, Settings
+from event_arb.config import OpportunitySettings, PolymarketProduct, PolymarketSettings, Settings
 from event_arb.scanner import Scanner
 
 
 @pytest.fixture
 def client(fixture_dir: Path) -> Iterator[TestClient]:
     settings = Settings(
+        # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
+        # clearly separated from the Polymarket US fixtures and tests.
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
         fixture_dir=fixture_dir,
         opportunity=OpportunitySettings(
             min_net_profit_usd=Decimal("0.50"),

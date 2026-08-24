@@ -107,6 +107,20 @@ def restore_pairs(
                 report.suspended.append((suspended, reason))
                 continue
 
+        # Product identity is checked before the fingerprint. The fingerprint would also
+        # catch a mismatch, but only incidentally via settlement asset; an explicit check
+        # states the rule and survives a future product that happens to share an asset.
+        if pair.polymarket_product is not polymarket.product:
+            reason = (
+                f"pair expects Polymarket product {pair.polymarket_product.value!r} but the "
+                f"stored market is {polymarket.product.value!r}; a Global approval can "
+                "never satisfy a US pair"
+            )
+            suspended = suspend_pair(pair, reason)
+            result[pair_id] = suspended
+            report.suspended.append((suspended, reason))
+            continue
+
         check = check_for_rules_change(pair, kalshi, polymarket)
         if check.changed:
             suspended = suspend_pair(pair, f"{check.detail} (detected during restore)")

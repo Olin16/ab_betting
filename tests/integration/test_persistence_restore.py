@@ -13,7 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from event_arb.config import OpportunitySettings, Settings, TrialSettings, WatchedPair
+from event_arb.config import (
+    OpportunitySettings,
+    PolymarketProduct,
+    PolymarketSettings,
+    Settings,
+    TrialSettings,
+    WatchedPair,
+)
 from event_arb.domain.enums import MatchStatus, Venue
 from event_arb.persistence.database import Database
 from event_arb.persistence.repositories import (
@@ -35,6 +42,9 @@ async def database() -> Database:
 
 def make_settings(fixture_dir: Path) -> Settings:
     return Settings(
+        # Legacy Polymarket **Global** corpus. Stated explicitly so this path stays
+        # clearly separated from the Polymarket US fixtures and tests.
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
         fixture_dir=fixture_dir,
         trial=TrialSettings(
             watched_pairs=[WatchedPair(kalshi_market_id=KALSHI_FED, polymarket_market_id=POLY_FED)]

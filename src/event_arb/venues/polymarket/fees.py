@@ -18,7 +18,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from event_arb.domain.enums import Venue
+from event_arb.domain.enums import FeePolicy, Venue
 from event_arb.domain.models import FeeConfig
 from event_arb.domain.money import ZERO, ceil_to
 
@@ -77,7 +77,13 @@ def polymarket_fee_config(category: str | None = None) -> FeeConfig:
     else:
         rate = max(CATEGORY_TAKER_RATES.values())
         source = f"conservative default (unknown category={supplied_key or 'none'!r})"
-    return FeeConfig(venue=Venue.POLYMARKET, taker_rate=rate, maker_rate=ZERO, source=source)
+    return FeeConfig(
+        venue=Venue.POLYMARKET,
+        taker_rate=rate,
+        maker_rate=ZERO,
+        fee_policy=FeePolicy.POLYMARKET_GLOBAL_5DP_CEIL,
+        source=source,
+    )
 
 
 def polymarket_fee_config_from_market(payload: dict[str, Any]) -> FeeConfig:
@@ -102,6 +108,7 @@ def polymarket_fee_config_from_market(payload: dict[str, Any]) -> FeeConfig:
             venue=Venue.POLYMARKET,
             taker_rate=ZERO,
             maker_rate=ZERO,
+            fee_policy=FeePolicy.POLYMARKET_GLOBAL_5DP_CEIL,
             source="market.feesEnabled=false",
         )
 
@@ -118,6 +125,7 @@ def polymarket_fee_config_from_market(payload: dict[str, Any]) -> FeeConfig:
                 venue=Venue.POLYMARKET,
                 taker_rate=rate,
                 maker_rate=ZERO,
+                fee_policy=FeePolicy.POLYMARKET_GLOBAL_5DP_CEIL,
                 source="market.feeSchedule.rate",
             )
 

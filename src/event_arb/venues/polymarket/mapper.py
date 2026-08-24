@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from event_arb.domain.enums import Outcome, SettlementAsset, Venue
+from event_arb.domain.enums import Outcome, SettlementAsset, Venue, VenueProduct
 from event_arb.domain.models import (
     BookLevel,
     FeeConfig,
@@ -167,7 +167,8 @@ def parse_market(payload: dict[str, Any], fee_config: FeeConfig | None = None) -
         fee_config=fee_config or polymarket_fee_config_from_market(payload),
         is_active=active and not closed,
         is_tradable=accepting and active and not closed,
-        # Polymarket settles in USDC on Polygon, not USD. This distinction is material.
+        # Polymarket Global settles in USDC on Polygon, not USD. This is material.
         settlement_asset=SettlementAsset.USDC,
+        product=VenueProduct.POLYMARKET_GLOBAL,
         raw_metadata=dict(payload),
     )

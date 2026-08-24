@@ -62,9 +62,9 @@ from event_arb.domain.money import (
     quantize_price,
     quantize_qty,
 )
+from event_arb.fees import taker_fee_for
 from event_arb.opportunities.depth import DepthWalk, walk_asks
 from event_arb.venues.kalshi.fees import KalshiOrderFeeAccumulator
-from event_arb.venues.polymarket.fees import taker_fee
 
 __all__ = ["CalculationInputs", "calculate_direction"]
 
@@ -111,7 +111,7 @@ def _kalshi_fees(walk: DepthWalk, market: VenueMarket, direct_member: bool) -> D
 
 def _polymarket_fees(walk: DepthWalk, market: VenueMarket) -> Decimal:
     return sum(
-        (taker_fee(fill.quantity, fill.price, market.fee_config) for fill in walk.fills), ZERO
+        (taker_fee_for(fill.quantity, fill.price, market.fee_config) for fill in walk.fills), ZERO
     )
 
 
