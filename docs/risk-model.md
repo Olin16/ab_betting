@@ -1,5 +1,10 @@
 # Risk Model
 
+> The implemented Polymarket model describes the legacy international CLOB. The intended
+> US target is Polymarket US, which settles in USD and requires a separate adapter. Do not
+> apply Global USDC, fee, sequence, or geoblock assumptions to the US product. See
+> `docs/venue-roadmap.md`.
+
 > **No opportunity produced by this system is risk-free.** Every opportunity record
 > carries the `non_atomic_execution` flag, without exception, because that risk cannot be
 > engineered away from outside the venues.
@@ -52,7 +57,7 @@ hashes at approval and auto-suspends the pair if either text changes.
 
 ## 3. Currency and settlement-asset risk
 
-Kalshi settles in **USD**. Polymarket settles in **USDC** on Polygon. These are different
+Kalshi settles in **USD**. Polymarket Global settles in **USDC** on Polygon. These are different
 assets:
 
 - **Depeg risk.** USDC has traded below $1.00 before and can again.

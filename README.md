@@ -3,6 +3,12 @@
 A safety-first scanner for **potential** arbitrage between economically equivalent binary
 event contracts on **Kalshi** and **Polymarket**.
 
+> **Venue identity matters:** the implemented Polymarket adapter targets the international
+> CLOB, which US operators may not use. The intended US deployment target is the separate
+> QCX-operated **Polymarket US** API. Its adapter is not implemented yet, and live mode
+> fails closed rather than falling back to Global. See
+> [`docs/venue-roadmap.md`](docs/venue-roadmap.md).
+
 > **This build collects market data, detects opportunities, and paper-trades them.
 > It cannot place a real order.** Live execution (Phase 7) is not implemented: the only
 > execution adapter that exists refuses every submission unconditionally.
@@ -15,7 +21,8 @@ event contracts on **Kalshi** and **Polymarket**.
 - Walks real order-book depth to compute executable quantity and volume-weighted prices.
   Midpoints are never used for profit calculations.
 - Models Kalshi's ceil-to-centicent fee rounding and Polymarket's category-based taker fee.
-- Treats USD and USDC as distinct assets with an explicit conversion/depeg haircut.
+- Treats USD and USDC as distinct assets with an explicit conversion/depeg haircut for
+  legacy Global fixtures; Polymarket US settles in USD and requires a separate adapter.
 - Suspends an approved pair automatically if either venue's rules text changes.
 - Simulates two-leg execution with latency, partial fills, and unhedged exposure.
 

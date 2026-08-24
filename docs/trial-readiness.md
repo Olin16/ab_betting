@@ -5,14 +5,14 @@ Tracks the agreed plan toward a supervised smoke test and then an unattended pap
 
 | # | Step | Status |
 | --- | --- | --- |
-| 1 | Review venue terms and developer agreement | **Done** — see the blocker below |
+| 1 | Review venue terms and developer agreement | **Partial** — Global reviewed; US review remains |
 | 2 | Watched-pair configuration and targeted refresh | **Done** |
 | 3 | Persistence and safe approval restore | **Done** |
 | 4 | Continuous synchronization; resolve sequence behaviour | **Done** |
 | 5 | Continuous scanning and automated paper execution | **Done** |
 | 6 | Retention and operational hardening | **Done** |
-| 7 | Supervised live read-only smoke test | Blocked on 4–6 |
-| 8 | Unattended paper trial | Blocked on 4–6 |
+| 7 | Supervised live read-only smoke test | Blocked on Polymarket US adapter and human gates |
+| 8 | Unattended paper trial | Blocked on step 7 evidence |
 
 ## What is done
 
@@ -81,26 +81,28 @@ nothing.
 - Malformed WebSocket updates now emit an immediately stale book on both venues, matching
   sequence-gap handling. Previously the stored book stayed eligible until it aged out.
 
-## ⚠ Legal blocker found in the Polymarket Terms
+## ⚠ Polymarket product pivot
 
-Polymarket prohibits trading by anyone residing, located, incorporated, registered, or
-principally doing business in the **United States** (and ~20 other territories), with the
-Terms stating "THERE ARE NO EXCEPTIONS". Restricted Persons may use only the Content
-Features and "may not access the Technology Features" — which is where the CLOB API this
-project reads lives.
+The reviewed terms govern **Polymarket Global**. They prohibit a US operator from using
+that product's CLOB technology, so the existing live adapter is not a lawful US trial
+target. Polymarket US is a separate QCX-operated, CFTC-designated product with a documented
+public API, authenticated market WebSocket, official SDKs, and USD settlement.
 
-A separate clause bars API access to Polymarket Data by non-retail professional entities
-engaged in **proprietary trading**, absent written agreement.
+The scanner is therefore pivoting to Polymarket US. Its adapter is not implemented yet.
+Configuration distinguishes US from Global and fails closed: selecting US cannot silently
+construct the Global client, while selecting Global requires an explicit eligibility and
+permission acknowledgement.
 
-Neither is an engineering problem. Until the operator's jurisdiction and retail status are
-confirmed, steps 7 and 8 cannot begin **for the Polymarket leg**, and no technical
-workaround is acceptable — VPN or similar circumvention is expressly prohibited and this
-project will not implement one. Kalshi is unaffected. Full detail in `docs/compliance.md`.
+Before step 7, implement and fixture-test the US adapter, complete US onboarding and terms
+review, confirm state eligibility and any production API/conformance approval, and verify
+the current US fee schedule. No technical workaround or Global fallback is acceptable.
+Full detail is in `docs/compliance.md` and `docs/venue-roadmap.md`.
 
 ## Human gates
 
-- [ ] **Confirm operator jurisdiction and retail status** against the Polymarket Terms
-      (see the blocker above). This gates the entire Polymarket leg.
+- [ ] Implement the read-only Polymarket US adapter from synthetic/recorded fixtures.
+- [ ] Complete Polymarket US onboarding, current terms review, state-eligibility check,
+      and any required written production API/conformance approval.
 - [ ] At least one real pair approved by a human who read both rulebooks end to end.
 - [ ] Kalshi membership in good standing; Rulebook permits the intended automated activity.
 - [ ] Kalshi authentication verified against a real key (api-assumptions A5), and whether

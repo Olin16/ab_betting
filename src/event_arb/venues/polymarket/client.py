@@ -1,4 +1,11 @@
-"""Polymarket read-only CLOB client.
+"""Polymarket **Global** read-only CLOB client.
+
+Targets the international platform operated by Adventure One QSS, Inc.:
+``clob.polymarket.com``, condition/token identifiers, USDC settlement on Polygon, and the
+Global geoblock endpoint. **None of that applies to Polymarket US** (QCX LLC), which is a
+separate CFTC-designated contract market with its own hosts, identifiers, USD settlement,
+and terms. It cannot be reached by repointing a base URL; it needs its own adapter (see
+docs/polymarket-us-plan.md).
 
 Market-data endpoints only. No order-entry method exists on this class.
 """
@@ -11,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from event_arb.config import PolymarketSettings
+from event_arb.config import PolymarketProduct, PolymarketSettings
 from event_arb.domain.enums import Outcome, Venue
 from event_arb.domain.models import OrderBook, VenueMarket
 from event_arb.observability.logging import get_logger
@@ -42,11 +49,21 @@ class PolymarketClient(VenueAdapter):
         geoblock: GeoblockChecker | None = None,
     ) -> None:
         super().__init__(Venue.POLYMARKET)
+        # Defence in depth. Settings selection is already guarded in
+        # Settings.validate_live_market_data(), but this client hard-codes Global hosts and
+        # Global identifier semantics, so constructing it from a US-configured settings
+        # object would silently send US-intended traffic to the international platform.
+        if settings.product is not PolymarketProduct.GLOBAL:
+            raise ValueError(
+                f"PolymarketClient targets Polymarket Global, but the configured product "
+                f"is {settings.product.value!r}. Polymarket US requires its own adapter; "
+                "it is not reachable by changing a base URL."
+            )
         self._settings = settings
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._owns_client = client is None
         self._limiter = RateLimiter(settings.requests_per_second)
-        self._geoblock = geoblock or GeoblockChecker(settings.geoblock_url, client=client)
+        self._geoblock = geoblock or GeoblockChecker(settings.global_geoblock_url, client=client)
         #: condition_id -> {"YES": token_id, "NO": token_id}
         self._token_ids: dict[str, dict[str, str]] = {}
 
@@ -116,7 +133,7 @@ class PolymarketClient(VenueAdapter):
         params: dict[str, Any] = {"active": "true", "closed": "false"}
         if limit is not None:
             params["limit"] = limit
-        payload = await self._get(self._settings.clob_base_url, "/markets", params=params)
+        payload = await self._get(self._settings.global_clob_base_url, "/markets", params=params)
         entries = payload.get("data", payload) if isinstance(payload, dict) else payload
         if not isinstance(entries, list):
             raise MarketDataError("Polymarket /markets did not return a list", Venue.POLYMARKET)
@@ -139,7 +156,9 @@ class PolymarketClient(VenueAdapter):
         markets: list[VenueMarket] = []
         for condition_id in condition_ids:
             try:
-                payload = await self._get(self._settings.clob_base_url, f"/markets/{condition_id}")
+                payload = await self._get(
+                    self._settings.global_clob_base_url, f"/markets/{condition_id}"
+                )
             except VenueError as exc:
                 log.warning(
                     "polymarket.market.fetch_failed", market_id=condition_id, error=str(exc)
@@ -175,13 +194,13 @@ class PolymarketClient(VenueAdapter):
                 f"Polymarket market {market_id} has no YES token", Venue.POLYMARKET
             )
         yes_payload = await self._get(
-            self._settings.clob_base_url, "/book", params={"token_id": yes_token}
+            self._settings.global_clob_base_url, "/book", params={"token_id": yes_token}
         )
         no_payload: dict[str, Any] | None = None
         no_token = tokens.get("NO")
         if no_token is not None:
             fetched = await self._get(
-                self._settings.clob_base_url, "/book", params={"token_id": no_token}
+                self._settings.global_clob_base_url, "/book", params={"token_id": no_token}
             )
             if isinstance(fetched, dict):
                 no_payload = fetched

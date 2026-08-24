@@ -42,13 +42,14 @@ Retained:
 Not retained:
 - raw API payloads beyond a bounded debug buffer (off by default);
 - credentials, signatures, or auth headers, in any form;
-- the caller IP returned by the Polymarket geoblock endpoint.
+- the caller IP returned by the **Polymarket Global** geoblock endpoint. Polymarket US
+  uses separate onboarding/KYC and API eligibility controls.
 
 Nothing is redistributed. **Both venues' developer terms may restrict storage and
-redistribution.** The Kalshi Developer Agreement was not machine-read for this build and
-must be reviewed by a human before any live data collection. Set a retention window for
-`orderbook_snapshots` before running against production feeds; it is the fastest-growing
-table by far.
+redistribution.** The Kalshi Developer Agreement and Polymarket Global terms have been
+reviewed; the complete current Polymarket US participant and API terms remain a human gate.
+Set a retention window for `orderbook_snapshots` before running against production feeds;
+it is the fastest-growing table by far.
 
 ## Rate limits
 
@@ -106,7 +107,8 @@ Nothing below is implemented. This is the gate, in order. **Do not start at step
 - [ ] Confirm whether market data requires authentication (A4).
 - [ ] Confirm the current fee schedule: coefficient, per-series multipliers, maker rates,
       and your member balance precision (A7).
-- [ ] Confirm Polymarket's category → taker-rate mapping (B4).
+- [ ] Confirm the selected Polymarket product's current fee coefficient, rebates, rounding,
+      tick sizes, and quantity constraints. Global B4 does not apply to Polymarket US.
 - [ ] Confirm real rate limits for your access tier (C2).
 - [ ] Run `pytest -m live` and confirm no schema assertion fails.
 
@@ -114,10 +116,13 @@ Nothing below is implemented. This is the gate, in order. **Do not start at step
 
 - [ ] Read the Kalshi Developer Agreement in full; confirm automated trading is permitted
       for your account type.
-- [ ] Read Polymarket's terms; confirm eligibility and API-trading permission.
+- [ ] Read the terms for the selected Polymarket product. A US operator must use
+      Polymarket US, complete KYC, confirm state eligibility, and obtain any required
+      production API/conformance approval.
 - [ ] Confirm KYC is complete and in good standing on both venues.
-- [ ] Confirm your jurisdiction is permitted — via the official geoblock endpoint, never
-      via a workaround.
+- [ ] Confirm jurisdiction through the selected product's official process. The geoblock
+      endpoint applies to Global; Polymarket US uses its own onboarding and eligibility
+      policy. Never use a workaround.
 - [ ] Understand the tax treatment of both instruments.
 - [ ] Obtain written sign-off if trading on behalf of anyone else.
 
@@ -144,7 +149,9 @@ Nothing below is implemented. This is the gate, in order. **Do not start at step
 
 - [ ] `TradingEnabled` stays `false` by default and requires a second, explicit
       confirmation at startup.
-- [ ] Geoblock check passes affirmatively before every submission, failing closed.
+- [ ] Product-specific compliance checks pass before every submission: Global requires an
+      affirmative geoblock result; Polymarket US requires a valid KYC/eligible account and
+      any venue-mandated authorization checks. All checks fail closed.
 - [ ] Idempotent client order IDs on every request; retries reuse the same ID.
 - [ ] After **any** timeout, resolve true order state by querying the venue. Never assume
       failure — assuming failure and retrying is how you double a position.

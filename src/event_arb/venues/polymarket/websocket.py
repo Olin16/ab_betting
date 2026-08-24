@@ -31,7 +31,7 @@ from typing import Any
 import websockets
 from websockets.asyncio.client import ClientConnection
 
-from event_arb.config import PolymarketSettings
+from event_arb.config import PolymarketProduct, PolymarketSettings
 from event_arb.domain.enums import Outcome, Venue
 from event_arb.domain.models import BookLevel, OrderBook, OrderBookSide
 from event_arb.observability import metrics
@@ -149,6 +149,11 @@ class PolymarketWebSocketStream:
         backoff: BackoffPolicy | None = None,
         rng: random.Random | None = None,
     ) -> None:
+        if settings.product is not PolymarketProduct.GLOBAL:
+            raise ValueError(
+                "PolymarketWebSocketStream targets Polymarket Global; "
+                "Polymarket US requires its own authenticated WebSocket adapter"
+            )
         self._settings = settings
         self._health = health
         self._backoff = backoff or BackoffPolicy()
@@ -179,7 +184,7 @@ class PolymarketWebSocketStream:
         while True:
             ping_task: asyncio.Task[None] | None = None
             try:
-                async with websockets.connect(self._settings.ws_url) as connection:
+                async with websockets.connect(self._settings.global_ws_url) as connection:
                     attempt = 0
                     self._health.connected = True
                     self._health.subscribed_markets = set(market_ids)

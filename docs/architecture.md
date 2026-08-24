@@ -1,5 +1,9 @@
 # Architecture
 
+> Current Polymarket source code and fixtures model the international CLOB. Polymarket US
+> is a separate target requiring a new adapter and USD fee/settlement model; live mode
+> fails closed until it exists. See `docs/venue-roadmap.md`.
+
 ## Data flow
 
 ```

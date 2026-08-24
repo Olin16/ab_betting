@@ -352,12 +352,24 @@ async def test_malformed_delta_emits_a_stale_book_not_silence() -> None:
     assert [m for m in connection.sent if m.get("cmd") == "update_subscription"]
 
 
-async def test_polymarket_malformed_price_change_stales_the_book() -> None:
+def test_global_polymarket_stream_refuses_us_settings() -> None:
     from event_arb.config import PolymarketSettings
     from event_arb.venues.polymarket.websocket import PolymarketWebSocketStream
 
+    with pytest.raises(ValueError, match="US requires its own authenticated WebSocket"):
+        PolymarketWebSocketStream(
+            settings=PolymarketSettings(),
+            health=AdapterHealth(venue=Venue.POLYMARKET),
+            token_map={},
+        )
+
+
+async def test_polymarket_malformed_price_change_stales_the_book() -> None:
+    from event_arb.config import PolymarketProduct, PolymarketSettings
+    from event_arb.venues.polymarket.websocket import PolymarketWebSocketStream
+
     stream = PolymarketWebSocketStream(
-        settings=PolymarketSettings(),
+        settings=PolymarketSettings(product=PolymarketProduct.GLOBAL),
         health=AdapterHealth(venue=Venue.POLYMARKET),
         token_map={"MKT": {"YES": "tok-yes", "NO": "tok-no"}},
     )

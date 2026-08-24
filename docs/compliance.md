@@ -1,19 +1,19 @@
 # Venue Terms — Review and Design Implications
 
-Kalshi Developer Agreement read in full on **2026-08-22** (6 pages). Polymarket Terms of
-Use read in full on **2026-08-23** (19 pages, operator-supplied PDF).
+Kalshi Developer Agreement read in full on **2026-08-22** (6 pages). The
+operator-supplied Polymarket Terms of Use read on **2026-08-23** govern **Polymarket
+Global**, not Polymarket US. Current Polymarket US regulatory materials and API
+documentation were reviewed on **2026-08-23**, but the complete current US participant
+agreement still requires operator/legal review before live use.
 
 This is step 1 of the trial plan because it constrains the design, not just the paperwork.
 
 > ## ⚠ Read this first
 >
-> **Polymarket prohibits trading by anyone in the United States, with no exceptions, and
-> bars Restricted Persons from accessing its Technology Features at all — which includes
-> the CLOB API this project reads.** If the operator is US-based, the cross-venue thesis
-> is not merely blocked at the order-submission step; the read-only data collection is
-> also outside the Terms. See "Polymarket — jurisdiction" below. This is a legal question
-> about who is operating the system, not a technical one, and no amount of engineering
-> resolves it.
+> **The reviewed restriction applies to Polymarket Global.** A US operator must not use
+> that product or its CLOB API. Polymarket US is a separate QCX-operated, CFTC-designated
+> product with a separate API and legal agreement. The project is pivoting to that US API;
+> until its adapter and compliance gates are complete, live mode fails closed.
 
 ## Kalshi — the governing clause
 
@@ -88,7 +88,34 @@ sequence-gap defences already in place.
 
 ---
 
-## Polymarket — jurisdiction (decisive)
+## Polymarket US — intended target
+
+Polymarket US is operated by QCX LLC d/b/a Polymarket US and is listed by the CFTC as a
+Designated Contract Market. Official documentation describes a separate public market-data
+API at `gateway.polymarket.us`, an authenticated API and market WebSocket at
+`api.polymarket.us`, USD-denominated contracts, and official SDKs.
+
+That resolves technical feasibility, not permission. The individual participant materials
+require identity verification, compliance with current jurisdiction policy, applicable
+conformance procedures, and written approval before using an API connection in live
+production. The operator must confirm with Polymarket US how those provisions apply to a
+self-service retail API key. Do not infer permission from the fact that an endpoint is
+publicly reachable.
+
+The following remain gates:
+
+- [ ] Complete Polymarket US onboarding and KYC for the actual operator.
+- [ ] Confirm eligibility for the operator's current state and location.
+- [ ] Read and retain the complete current individual participant/clearing agreement,
+      rulebook, risk disclosure, market-data terms, and API conditions.
+- [ ] Obtain any required production API or conformance approval in writing.
+- [ ] Confirm whether derived data, local retention, alerts, and dashboard use are allowed.
+- [ ] Use only the Polymarket US API and credentials; never reuse Global endpoints,
+      wallets, token identifiers, or geoblock assumptions.
+
+See `docs/venue-roadmap.md` for the adapter migration and verified official references.
+
+## Polymarket Global — jurisdiction (decisive for that product)
 
 > "USE OF THE SITE, PLATFORM OR TECHNOLOGY FEATURES FOR TRADING IS NOT PERMITTED BY
 > PERSONS OR ENTITIES WHO RESIDE IN, ARE LOCATED IN, ARE INCORPORATED IN, HAVE A
@@ -120,8 +147,9 @@ The geoblock checker calls the venue's own endpoint and fails closed; that is en
 of the restriction, never a way around it.
 
 **Consequence:** if the operator is in any listed jurisdiction, this system must not be
-pointed at Polymarket at all — not for trading, and not for read-only market data. Kalshi
-is unaffected and remains usable on its own terms.
+pointed at **Polymarket Global** — not for trading and not for read-only CLOB data.
+Polymarket US is a separate product governed by separate eligibility and terms. Kalshi is
+unaffected and remains usable on its own terms.
 
 ## Polymarket — professional and proprietary trading (decisive)
 
@@ -168,10 +196,9 @@ webhook payloads. Neither cures the underlying permission question.
 
 ## Outstanding human gates
 
-- [ ] **Confirm the operator's jurisdiction.** If anyone operating, directing, or
-      controlling this system is in the United States or another listed territory, do not
-      point it at Polymarket at all. There are no exceptions and no technical workaround
-      is permissible.
+- [ ] **Confirm the operator's jurisdiction and selected product.** A US operator must not
+      point the system at Polymarket Global. There is no technical workaround and Global
+      must never be used as a fallback for Polymarket US.
 - [ ] **Confirm retail status.** If the operator is a firm engaged in proprietary trading,
       Polymarket API access requires written agreement first.
 - [ ] **Consider seeking written consent** for automated access via Polymarket's builder

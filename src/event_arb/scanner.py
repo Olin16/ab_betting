@@ -59,6 +59,8 @@ def build_adapters(settings: Settings) -> dict[Venue, VenueAdapter]:
             Venue.POLYMARKET: FixtureAdapter(Venue.POLYMARKET, settings.fixture_dir),
         }
 
+    settings.validate_live_market_data()
+
     from event_arb.venues.kalshi.client import KalshiClient
     from event_arb.venues.polymarket.client import PolymarketClient
 

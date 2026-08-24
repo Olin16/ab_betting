@@ -3,8 +3,10 @@
 ## Objective
 
 Detect *potential* arbitrage between economically equivalent binary event contracts on
-**Kalshi** and **Polymarket**, with market-data collection, opportunity detection and
-paper trading only. Live order submission is out of scope and structurally disabled.
+**Kalshi** and **Polymarket US**, with market-data collection, opportunity detection and
+paper trading only. The existing international Polymarket implementation is legacy and
+must not be confused with the separate US product. Live order submission is out of scope
+and structurally disabled.
 
 ## Non-goals (explicit)
 
@@ -23,7 +25,8 @@ paper trading only. Live order submission is out of scope and structurally disab
 | Fixture-backed adapters are the default | Deterministic tests, no live dependency, no ToS risk in CI. |
 | Two-stage matching: machine *candidate* → human *approval* | Title similarity is not settlement equivalence. Only manually approved pairs may be labeled `confirmed`. |
 | Rules hashing on approval | Any later rules-text change auto-suspends the pair. |
-| USD and USDC modeled as distinct assets | Depeg/conversion risk is a real cost, not a rounding detail. |
+| Polymarket products are explicit | Global and US have different entities, APIs, identifiers, terms, and settlement rails. |
+| USD and USDC remain distinct | Required for legacy Global fixtures; Polymarket US uses USD and must not inherit a depeg haircut. |
 
 ## Phases
 
@@ -34,9 +37,11 @@ Ruff + mypy strict, `.env.example`, security `.gitignore`, threat model.
 
 ### Phase 2 — Read-only venue adapters
 `VenueAdapter` protocol: `discover_markets()`, `fetch_orderbook()`, `stream()`, `health()`.
-Kalshi and Polymarket REST + WebSocket clients, plus fixture adapters implementing the same
-protocol. Reconnect with exponential backoff + jitter, sequence-gap detection with snapshot
-resync, freshness/staleness tracking, normalized errors, rate-limit awareness.
+Kalshi and Polymarket US REST + WebSocket clients, plus fixture adapters implementing the
+same protocol. Reconnect with exponential backoff + jitter, sequence-gap detection with
+snapshot resync, freshness/staleness tracking, normalized errors, rate-limit awareness.
+The current Global adapter is retained only as explicitly selected legacy code while the US
+adapter is built; live mode never substitutes one product for the other.
 
 ### Phase 3 — Market matching
 Normalizer (entities, thresholds, comparison operators, dates, timezones), candidate

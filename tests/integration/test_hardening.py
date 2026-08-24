@@ -17,7 +17,13 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from event_arb.api.app import create_app
-from event_arb.config import OpportunitySettings, Settings
+from event_arb.config import (
+    DataSource,
+    OpportunitySettings,
+    PolymarketProduct,
+    PolymarketSettings,
+    Settings,
+)
 from event_arb.scanner import Scanner
 
 TOKEN = "test-token-not-a-real-secret"
@@ -63,6 +69,45 @@ def test_externally_restricted_bind_is_an_explicit_acknowledgement(
         fixture_dir, api_host="0.0.0.0", api_bind_is_externally_restricted=True
     )
     settings.validate_exposure()
+
+
+# ------------------------------------------------------- Polymarket product guard
+
+
+def test_fixture_mode_does_not_require_a_live_polymarket_product(fixture_dir: Path) -> None:
+    base_settings(fixture_dir).validate_live_market_data()
+
+
+def test_polymarket_us_live_mode_fails_until_adapter_exists(fixture_dir: Path) -> None:
+    settings = base_settings(
+        fixture_dir,
+        data_source=DataSource.LIVE,
+        polymarket=PolymarketSettings(product=PolymarketProduct.US),
+    )
+    with pytest.raises(ValueError, match=r"US.*adapter is not implemented"):
+        settings.validate_live_market_data()
+
+
+def test_polymarket_global_live_mode_requires_explicit_eligibility(fixture_dir: Path) -> None:
+    settings = base_settings(
+        fixture_dir,
+        data_source=DataSource.LIVE,
+        polymarket=PolymarketSettings(product=PolymarketProduct.GLOBAL),
+    )
+    with pytest.raises(ValueError, match="Global live access requires explicit"):
+        settings.validate_live_market_data()
+
+
+def test_polymarket_global_acknowledgement_is_explicit(fixture_dir: Path) -> None:
+    settings = base_settings(
+        fixture_dir,
+        data_source=DataSource.LIVE,
+        polymarket=PolymarketSettings(
+            product=PolymarketProduct.GLOBAL,
+            global_terms_eligibility_confirmed=True,
+        ),
+    )
+    settings.validate_live_market_data()
 
 
 def test_app_refuses_to_build_when_exposed(fixture_dir: Path) -> None:
@@ -118,3 +163,31 @@ def test_loopback_deployment_needs_no_token(fixture_dir: Path) -> None:
     for client in client_for(settings):
         assert client.post("/api/scan").status_code == 200
         break
+
+
+def test_global_client_refuses_us_configured_settings() -> None:
+    """Defence in depth beneath the settings-level guard.
+
+    PolymarketClient hard-codes Global hosts and Global identifier semantics. Constructing
+    it from a US-configured settings object would send US-intended traffic to the
+    international platform, which is a different venue with different terms.
+    """
+    from event_arb.venues.polymarket.client import PolymarketClient
+
+    with pytest.raises(ValueError, match="Polymarket US requires its own adapter"):
+        PolymarketClient(PolymarketSettings(product=PolymarketProduct.US))
+
+
+def test_global_client_accepts_global_settings() -> None:
+    from event_arb.venues.polymarket.client import PolymarketClient
+
+    client = PolymarketClient(PolymarketSettings(product=PolymarketProduct.GLOBAL))
+    assert client.venue.value == "POLYMARKET"
+
+
+def test_no_polymarket_client_exposes_order_entry() -> None:
+    """Neither product may acquire a submission surface."""
+    from event_arb.venues.polymarket.client import PolymarketClient
+
+    forbidden = {"submit", "submit_order", "place_order", "create_order", "buy", "sell"}
+    assert not (forbidden & set(dir(PolymarketClient)))

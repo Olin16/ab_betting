@@ -78,7 +78,7 @@ can change which side settles in the money.
 | `invalid_outcome` | yes | 50/50 vs void vs No |
 | `timezone` | no | Informational; compare absolute instants |
 | `early_closure` | no | Documentation asymmetry |
-| `settlement_asset` | no | Expected USD/USDC; priced as a haircut |
+| `settlement_asset` | no | Global uses USD/USDC with a haircut; Polymarket US and Kalshi both use USD |
 
 ### Equivalence classes, not phrasings
 

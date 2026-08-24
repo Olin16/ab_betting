@@ -26,6 +26,7 @@ __all__ = [
     "KalshiSettings",
     "OpportunitySettings",
     "PaperSettings",
+    "PolymarketProduct",
     "PolymarketSettings",
     "Settings",
     "TrialSettings",
@@ -42,6 +43,13 @@ class DataSource(StrEnum):
 class KalshiEnvironment(StrEnum):
     DEMO = "demo"
     PROD = "prod"
+
+
+class PolymarketProduct(StrEnum):
+    """Legally and technically distinct Polymarket products."""
+
+    US = "us"
+    GLOBAL = "global"
 
 
 #: Verified 2026-08-21 against docs.kalshi.com/getting_started/api_environments.
@@ -78,10 +86,16 @@ class KalshiSettings(BaseModel):
 
 
 class PolymarketSettings(BaseModel):
-    clob_base_url: str = "https://clob.polymarket.com"
-    gamma_base_url: str = "https://gamma-api.polymarket.com"
-    ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-    geoblock_url: str = "https://polymarket.com/api/geoblock"
+    #: Polymarket US is the intended target. Its adapter is not implemented yet, so live
+    #: mode fails closed instead of silently falling back to the international CLOB.
+    product: PolymarketProduct = PolymarketProduct.US
+    #: Set only after confirming eligibility under the international platform's current
+    #: terms and obtaining any required API permission. US operators must leave this off.
+    global_terms_eligibility_confirmed: bool = False
+    global_clob_base_url: str = "https://clob.polymarket.com"
+    global_gamma_base_url: str = "https://gamma-api.polymarket.com"
+    global_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    global_geoblock_url: str = "https://polymarket.com/api/geoblock"
     requests_per_second: float = 5.0
     #: Haircut applied to USDC-denominated proceeds to price depeg/conversion risk.
     usdc_haircut_pct: Decimal = Decimal("0.10")
@@ -228,6 +242,21 @@ class Settings(BaseSettings):
                 f"refusing to serve on {self.api_host} without EVENT_ARB_API_AUTH_TOKEN: "
                 "the dashboard exposes a state-changing approval endpoint. Bind to "
                 "127.0.0.1, or set a token and put an authenticating proxy in front."
+            )
+
+    def validate_live_market_data(self) -> None:
+        """Fail closed when the selected Polymarket product is not safely supported."""
+        if self.data_source is not DataSource.LIVE:
+            return
+        if self.polymarket.product is PolymarketProduct.US:
+            raise ValueError(
+                "Polymarket US is selected, but its read-only adapter is not implemented; "
+                "live mode will not fall back to Polymarket Global"
+            )
+        if not self.polymarket.global_terms_eligibility_confirmed:
+            raise ValueError(
+                "Polymarket Global live access requires explicit confirmation of operator "
+                "eligibility and API permission; US persons must use Polymarket US"
             )
 
     @property

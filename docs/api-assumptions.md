@@ -103,7 +103,83 @@ Rounding, per the fee-rounding page:
 
 ---
 
-## Polymarket
+## Polymarket US — intended target, adapter not implemented
+
+Checked against official documentation on **2026-08-23**. These facts define the next
+fixture-backed adapter; they are not evidence that the current Global mapper is compatible.
+
+### US1. Product and settlement — VERIFIED
+
+Polymarket US is operated by QCX LLC d/b/a Polymarket US, a CFTC-designated contract
+market. It is distinct from the international product and trades in **USD**, not USDC on
+Polygon.
+
+Sources: <https://docs.polymarket.us/getting-started/what-is-polymarket-us>,
+<https://www.cftc.gov/IndustryOversight/IndustryFilings/TradingOrganizations/49571>
+
+### US2. Public market REST — VERIFIED paths, ASSUMPTION full schema
+
+Public base: `https://gateway.polymarket.us`.
+
+- `GET /v1/markets`
+- `GET /v1/market/id/{id}`
+- `GET /v1/market/slug/{slug}`
+- `GET /v1/markets/{slug}/book`
+- `GET /v1/markets/{slug}/bbo`
+- `GET /v1/markets/{slug}/settlement`
+
+The documented full book contains `marketData.bids` and `marketData.offers`; each level
+has a USD `px.value` and string `qty`. Exact live types, pagination, timestamps, tick size,
+minimum quantity, and rule-text fields must be captured in fixtures before implementation.
+
+Source: <https://docs.polymarket.us/api-reference/market/overview>
+
+### US3. Market WebSocket — VERIFIED path, ASSUMPTION continuity
+
+`wss://api.polymarket.us/v1/ws/markets` supports full market-data, lite/BBO, and trade
+subscriptions by market slug. The WebSocket documentation requires API-key headers using
+`timestamp + "GET" + path` signing, even though public REST market data requires no key.
+Treat the WebSocket as authenticated and fail closed without credentials.
+
+The documentation says messages are delivered in order but the reviewed examples do not
+establish a sequence field, snapshot/delta semantics, or a formal gap-recovery protocol.
+Use full-book snapshots plus periodic REST resynchronization until recorded traffic proves
+stronger continuity guarantees.
+
+Sources: <https://docs.polymarket.us/api-reference/websocket/overview>,
+<https://docs.polymarket.us/api-reference/websocket/markets>
+
+### US4. Fees — VERIFIED published formula, changeable parameters
+
+The published US fee formula is `fee = theta × contracts × p × (1-p)`. The schedule
+reviewed on 2026-08-23 lists a taker coefficient and maker rebate, but temporary rebate
+programs and effective dates make those values unsafe to hard-code. Query or configure the
+current market/account fee treatment and verify rounding before using live profitability.
+
+Source: <https://docs.polymarket.us/fees>
+
+### US5. Authentication and permission — HUMAN GATE
+
+Official retail documentation describes API keys after app onboarding and identity
+verification. Participant materials also require applicable conformance procedures and
+written approval before production API connectivity. Confirm the operator's exact access
+path with Polymarket US; public documentation is not a substitute for contractual
+permission.
+
+Sources: <https://docs.polymarket.us/api-reference/authentication>,
+<https://www.polymarketexchange.com/regulatory.html>
+
+### US6. Official SDK — VERIFIED availability, not yet selected
+
+The official `polymarket-us` Python SDK advertises async support, typed REST resources,
+authentication, and WebSocket support. Evaluate and pin it only after reviewing its source,
+license, transitive dependencies, Decimal behavior, and secret-handling boundaries.
+
+Source: <https://docs.polymarket.us/api-reference/sdks/introduction>
+
+---
+
+## Polymarket Global — legacy adapter
 
 ### B1. Geoblock — VERIFIED
 Source: <https://docs.polymarket.com/api-reference/geoblock>
@@ -150,7 +226,7 @@ to 5 decimal places, minimum charge 0.00001 USDC.
   operational-cost buffer.
 
 ### B5. Settlement asset — VERIFIED (material to arbitrage)
-Polymarket settles in **USDC** on Polygon; Kalshi settles in **USD**. These are modeled as
+Polymarket Global settles in **USDC** on Polygon; Kalshi settles in **USD**. These are modeled as
 distinct assets. Depeg and conversion cost are exposed as explicit risk flags and a
 configurable haircut, never assumed to be 1.0000 silently.
 
@@ -162,7 +238,7 @@ configurable haircut, never assumed to be 1.0000 silently.
 The Kalshi Developer Agreement was read in full on 2026-08-22. It materially constrains
 storage and sharing: API use is limited to facilitating your own trading, and data may not
 be shared with third parties without written authorization. See **docs/compliance.md**.
-Polymarket's Terms of Use was read in full on 2026-08-23. It prohibits trading by US
+Polymarket Global's Terms of Use was read in full on 2026-08-23. It prohibits trading by US
 persons and other listed territories with no exceptions, bars Restricted Persons from
 accessing the Technology Features (the CLOB API) at all, and bars API access to its Data by
 non-retail proprietary trading entities absent written agreement. **This may make the

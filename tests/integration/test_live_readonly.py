@@ -18,7 +18,7 @@ import os
 import httpx
 import pytest
 
-from event_arb.config import KalshiSettings, PolymarketSettings
+from event_arb.config import KalshiSettings, PolymarketProduct, PolymarketSettings
 from event_arb.venues.polymarket.geoblock import GeoblockChecker
 
 pytestmark = pytest.mark.live
@@ -28,6 +28,26 @@ skip_unless_opted_in = pytest.mark.skipif(
     not RUN_LIVE,
     reason="set EVENT_ARB_RUN_LIVE_TESTS=1 to opt in to read-only live API calls",
 )
+
+GLOBAL_TERMS_CONFIRMED = (
+    os.environ.get("EVENT_ARB_POLYMARKET__PRODUCT") == PolymarketProduct.GLOBAL.value
+    and os.environ.get("EVENT_ARB_POLYMARKET__GLOBAL_TERMS_ELIGIBILITY_CONFIRMED", "").lower()
+    == "true"
+)
+skip_unless_global_eligible = pytest.mark.skipif(
+    not GLOBAL_TERMS_CONFIRMED,
+    reason=(
+        "Global schema checks require EVENT_ARB_POLYMARKET__PRODUCT=global and explicit "
+        "Global terms eligibility confirmation"
+    ),
+)
+
+
+def _global_settings() -> PolymarketSettings:
+    return PolymarketSettings(
+        product=PolymarketProduct.GLOBAL,
+        global_terms_eligibility_confirmed=True,
+    )
 
 
 @skip_unless_opted_in
@@ -51,9 +71,10 @@ async def test_kalshi_orderbook_schema_still_matches_assumptions() -> None:
 
 
 @skip_unless_opted_in
+@skip_unless_global_eligible
 async def test_polymarket_geoblock_endpoint_shape() -> None:
-    """Confirms the geoblock endpoint still returns a boolean ``blocked``."""
-    checker = GeoblockChecker(PolymarketSettings().geoblock_url)
+    """Confirms the Global geoblock endpoint still returns a boolean ``blocked``."""
+    checker = GeoblockChecker(_global_settings().global_geoblock_url)
     status = await checker.check()
     await checker.close()
     # We assert only on the shape, never that access is permitted.
@@ -61,10 +82,11 @@ async def test_polymarket_geoblock_endpoint_shape() -> None:
 
 
 @skip_unless_opted_in
+@skip_unless_global_eligible
 async def test_polymarket_book_schema_still_matches_assumptions() -> None:
-    settings = PolymarketSettings()
+    settings = _global_settings()
     async with httpx.AsyncClient(timeout=10.0) as client:
-        markets = await client.get(f"{settings.clob_base_url}/markets")
+        markets = await client.get(f"{settings.global_clob_base_url}/markets")
         markets.raise_for_status()
         entries = markets.json().get("data", [])
         assert entries, "Polymarket /markets returned no data"
@@ -72,7 +94,8 @@ async def test_polymarket_book_schema_still_matches_assumptions() -> None:
         assert tokens, "Polymarket market objects no longer carry 'tokens'"
 
         book = await client.get(
-            f"{settings.clob_base_url}/book", params={"token_id": tokens[0]["token_id"]}
+            f"{settings.global_clob_base_url}/book",
+            params={"token_id": tokens[0]["token_id"]},
         )
         book.raise_for_status()
         body = book.json()

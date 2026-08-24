@@ -7,8 +7,9 @@ ranked by what an attacker gains, and the ranking is not close — key material 
 
 | Asset | Impact if compromised | Where it lives |
 | --- | --- | --- |
-| **Wallet private key** | Irreversible, total loss of on-chain funds. No recourse. | Never in this repo. Behind the `Signer` interface only. |
+| **Global wallet private key (legacy only)** | Irreversible loss of on-chain funds if the Global product were ever authorized. Polymarket US has no wallet key. | Never in this repo. Behind the `Signer` interface only. |
 | **Kalshi API private key** | Account takeover: place and cancel orders, read positions. | A file path in config; key bytes read at use time only. |
+| **Polymarket US API signing key** | Account takeover if a future trading adapter were authorized. | Not implemented; future key material must remain behind an isolated signer. |
 | **API key IDs** | Enables targeted attacks; not sufficient alone. | `.env` (untracked) |
 | **Webhook URLs** | Alert spoofing or leakage of trading intent. | `.env` (untracked) |
 | **Approved-pair data** | Corruption causes unhedged positions believed to be hedged. | Database |
@@ -45,8 +46,8 @@ Controls:
   hex strings are stripped even under an innocuous key name.
 - Redaction recurses through nested dicts, lists, and tuples.
 - No signed request or raw auth header is ever logged.
-- The Polymarket geoblock response includes the caller's IP; it is deliberately not
-  stored or logged.
+- The Polymarket Global geoblock response includes the caller's IP; it is deliberately not
+  stored or logged. Polymarket US uses separate KYC/API credentials.
 
 Tested in `tests/unit/test_logging_redaction.py`.
 
@@ -83,11 +84,12 @@ Tested in `tests/unit/test_execution_disabled.py`, including that all controls p
 
 *Threat:* orders are submitted from a restricted jurisdiction.
 
-Controls: `GeoblockChecker` calls the official endpoint and **fails closed**. A network
-error, timeout, non-200, non-JSON body, missing field, or non-boolean `blocked` all
-resolve to "blocked". Only an explicit `blocked: false` permits anything. Blocked results
-are never cached as allowed. The system never attempts to circumvent a restriction, and
-contains no proxy, VPN, or IP-rotation capability.
+Controls: for the legacy Global product, `GeoblockChecker` calls its official endpoint and
+**fails closed**. A network error, timeout, non-200, non-JSON body, missing field, or
+non-boolean `blocked` all resolve to "blocked". Polymarket US must use its own KYC,
+jurisdiction, account-status, and API-authorization controls; the Global geoblock endpoint
+is not evidence of US eligibility. The system never attempts to circumvent a restriction
+and contains no proxy, VPN, or IP-rotation capability.
 
 ## T6 — Data poisoning / malformed venue responses
 

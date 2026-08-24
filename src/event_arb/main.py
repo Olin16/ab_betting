@@ -273,6 +273,7 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
     print(f"  min return          : {settings.opportunity.min_return_pct}%")
     print(f"  max book age        : {settings.opportunity.max_book_age_ms}ms")
     print(f"  slippage buffer     : {settings.opportunity.slippage_buffer_pct}%")
+    print(f"  polymarket product  : {settings.polymarket.product.value}")
     print(f"  USDC haircut        : {settings.polymarket.usdc_haircut_pct}%")
 
     print("\nSafety:")
@@ -290,6 +291,11 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
         return 1
 
     if settings.data_source is DataSource.LIVE:
+        try:
+            settings.validate_live_market_data()
+        except ValueError as exc:
+            print(f"\n  LIVE MARKET DATA BLOCKED: {exc}")
+            return 1
         print("\n  NOTE: live market data is enabled (read-only). Confirm you have")
         print("  reviewed each venue's developer terms and rate limits.")
     return 0
