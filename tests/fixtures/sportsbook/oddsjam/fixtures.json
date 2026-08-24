@@ -1,0 +1,26 @@
+{
+  "data": [
+    {
+      "id": "EVT-NBA-0001",
+      "game_id": "nba-2026-11-04-LAL-BOS",
+      "start_date": "2026-11-04T00:30:00Z",
+      "status": "unplayed",
+      "is_live": false,
+      "sport": {"id": "basketball", "name": "Basketball"},
+      "league": {"id": "nba", "name": "NBA"},
+      "home_competitors": [{"id": "T-BOS", "name": "Boston Celtics", "abbreviation": "BOS"}],
+      "away_competitors": [{"id": "T-LAL", "name": "Los Angeles Lakers", "abbreviation": "LAL"}]
+    },
+    {
+      "id": "EVT-NFL-0002",
+      "game_id": "nfl-2026-11-08-KC-BUF",
+      "start_date": "2026-11-08T18:00:00Z",
+      "status": "unplayed",
+      "is_live": false,
+      "sport": {"id": "football", "name": "Football"},
+      "league": {"id": "nfl", "name": "NFL"},
+      "home_competitors": [{"id": "T-BUF", "name": "Buffalo Bills", "abbreviation": "BUF"}],
+      "away_competitors": [{"id": "T-KC", "name": "Kansas City Chiefs", "abbreviation": "KC"}]
+    }
+  ]
+}

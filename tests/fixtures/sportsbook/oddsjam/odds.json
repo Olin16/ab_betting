@@ -1,0 +1,73 @@
+{
+  "data": [
+    {
+      "id": "EVT-NBA-0001",
+      "game_id": "nba-2026-11-04-LAL-BOS",
+      "start_date": "2026-11-04T00:30:00Z",
+      "sport": {"id": "basketball", "name": "Basketball"},
+      "league": {"id": "nba", "name": "NBA"},
+      "home_competitors": [{"id": "T-BOS", "name": "Boston Celtics", "abbreviation": "BOS"}],
+      "away_competitors": [{"id": "T-LAL", "name": "Los Angeles Lakers", "abbreviation": "LAL"}],
+      "odds": [
+        {
+          "id": "EVT-NBA-0001:DraftKings:moneyline:boston_celtics",
+          "sportsbook": "DraftKings", "market": "Moneyline", "market_id": "moneyline",
+          "name": "Boston Celtics", "selection": "Boston Celtics",
+          "normalized_selection": "boston_celtics", "is_main": true,
+          "price": -150, "timestamp": 1793000000.5,
+          "limits": {"max": 2500}
+        },
+        {
+          "id": "EVT-NBA-0001:DraftKings:moneyline:los_angeles_lakers",
+          "sportsbook": "DraftKings", "market": "Moneyline", "market_id": "moneyline",
+          "name": "Los Angeles Lakers", "selection": "Los Angeles Lakers",
+          "normalized_selection": "los_angeles_lakers", "is_main": true,
+          "price": 130, "timestamp": 1793000000.5,
+          "limits": {"max": 2500}
+        },
+        {
+          "id": "EVT-NBA-0001:FanDuel:moneyline:los_angeles_lakers",
+          "sportsbook": "FanDuel", "market": "Moneyline", "market_id": "moneyline",
+          "name": "Los Angeles Lakers", "selection": "Los Angeles Lakers",
+          "normalized_selection": "los_angeles_lakers", "is_main": true,
+          "price": 145, "timestamp": 1793000001.0,
+          "limits": {"max": null}
+        },
+        {
+          "id": "EVT-NBA-0001:DraftKings:point_spread:boston_celtics",
+          "sportsbook": "DraftKings", "market": "Point Spread", "market_id": "point_spread",
+          "name": "Boston Celtics -3", "selection": "Boston Celtics",
+          "normalized_selection": "boston_celtics", "is_main": true,
+          "price": -110, "points": -3, "timestamp": 1793000000.5,
+          "limits": {"max": 1000}
+        },
+        {
+          "id": "EVT-NBA-0001:DraftKings:total_points:over",
+          "sportsbook": "DraftKings", "market": "Total Points", "market_id": "total_points",
+          "name": "Over 220.5", "selection": "Over",
+          "normalized_selection": "over", "is_main": true,
+          "price": -108, "points": 220.5, "timestamp": 1793000000.5,
+          "limits": {"max": 1500}
+        }
+      ]
+    },
+    {
+      "id": "EVT-NFL-0002",
+      "game_id": "nfl-2026-11-08-KC-BUF",
+      "sport": {"id": "football", "name": "Football"},
+      "league": {"id": "nfl", "name": "NFL"},
+      "home_competitors": [{"id": "T-BUF", "name": "Buffalo Bills", "abbreviation": "BUF"}],
+      "away_competitors": [{"id": "T-KC", "name": "Kansas City Chiefs", "abbreviation": "KC"}],
+      "odds": [
+        {
+          "id": "EVT-NFL-0002:Caesars:moneyline:kansas_city_chiefs",
+          "sportsbook": "Caesars", "market": "Moneyline", "market_id": "moneyline",
+          "name": "Kansas City Chiefs", "selection": "Kansas City Chiefs",
+          "normalized_selection": "kansas_city_chiefs", "is_main": true,
+          "price": 175, "timestamp": 1793000010.0,
+          "limits": {"max": 5000}
+        }
+      ]
+    }
+  ]
+}

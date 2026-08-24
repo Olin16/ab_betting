@@ -1,0 +1,70 @@
+[
+  {"event": "connected", "entry_id": "0-0", "data": []},
+  {"event": "ping", "entry_id": "0-1", "data": []},
+  {
+    "event": "odds", "entry_id": "1730000000-1",
+    "data": [{
+      "fixture_id": "EVT-NBA-0001", "game_id": "nba-2026-11-04-LAL-BOS",
+      "id": "EVT-NBA-0001:DraftKings:moneyline:los_angeles_lakers",
+      "sportsbook": "DraftKings", "market": "Moneyline", "market_id": "moneyline",
+      "name": "Los Angeles Lakers", "selection": "Los Angeles Lakers",
+      "normalized_selection": "los_angeles_lakers",
+      "sport": "Basketball", "league": "NBA",
+      "is_main": true, "is_live": false,
+      "price": 132, "timestamp": 1793000100.0,
+      "limits": {"max": 2500}
+    }]
+  },
+  {
+    "event": "odds", "entry_id": "1730000000-2",
+    "data": [{
+      "fixture_id": "EVT-NBA-0001", "game_id": "nba-2026-11-04-LAL-BOS",
+      "id": "EVT-NBA-0001:DraftKings:moneyline:los_angeles_lakers",
+      "sportsbook": "DraftKings", "market": "Moneyline", "market_id": "moneyline",
+      "name": "Los Angeles Lakers", "selection": "Los Angeles Lakers",
+      "normalized_selection": "los_angeles_lakers",
+      "sport": "Basketball", "league": "NBA",
+      "is_main": true, "is_live": false,
+      "price": 132, "timestamp": 1793000100.0,
+      "limits": {"max": 2500}
+    }]
+  },
+  {
+    "event": "odds", "entry_id": "1730000000-3",
+    "data": [{
+      "fixture_id": "EVT-NBA-0001", "game_id": "nba-2026-11-04-LAL-BOS",
+      "id": "EVT-NBA-0001:DraftKings:point_spread:boston_celtics",
+      "sportsbook": "DraftKings", "market": "Point Spread", "market_id": "point_spread",
+      "name": "Boston Celtics -3.5", "selection": "Boston Celtics",
+      "normalized_selection": "boston_celtics",
+      "sport": "Basketball", "league": "NBA",
+      "is_main": true, "is_live": false,
+      "price": -105, "points": -3.5, "timestamp": 1793000150.0,
+      "limits": {"max": 1000}
+    }]
+  },
+  {
+    "event": "locked-odds", "entry_id": "1730000000-4",
+    "data": [{
+      "fixture_id": "EVT-NBA-0001", "game_id": "nba-2026-11-04-LAL-BOS",
+      "id": "EVT-NBA-0001:FanDuel:moneyline:los_angeles_lakers",
+      "sportsbook": "FanDuel", "market": "Moneyline", "market_id": "moneyline",
+      "name": "Los Angeles Lakers", "selection": "Los Angeles Lakers",
+      "normalized_selection": "los_angeles_lakers",
+      "sport": "Basketball", "league": "NBA",
+      "is_main": true, "is_live": false,
+      "price": 145, "timestamp": 1793000200.0,
+      "limits": {"max": null}
+    }]
+  },
+  {
+    "event": "odds", "entry_id": "1730000000-5",
+    "data": [{
+      "fixture_id": "EVT-NBA-0001",
+      "sportsbook": "DraftKings", "market_id": "moneyline",
+      "selection": "Missing Price Selection"
+    }]
+  },
+  {"event": "fixture-status", "entry_id": "1730000000-6",
+   "data": {"fixture_id": "EVT-NBA-0001", "new_status": "delayed", "old_status": "unplayed"}}
+]
