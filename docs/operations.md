@@ -181,3 +181,45 @@ Nothing below is implemented. This is the gate, in order. **Do not start at step
 **Stop condition:** if any item in A or B cannot be satisfied, do not proceed. An
 unverified fee schedule or an unproven hedge rate turns "arbitrage" into leveraged
 directional risk with extra steps.
+
+---
+
+## Candidate research
+
+`event-arb candidates discover` proposes cross-venue pair *candidates* from public market
+metadata. It never approves, never paper-trades, never reads an order book, and never
+opens a WebSocket.
+
+```bash
+event-arb candidates discover \
+  --kalshi-limit 250 --polymarket-limit 250 \
+  --min-score 0.55 --max-per-market 3 \
+  --max-results 100 --verify-top 25
+```
+
+Before any request it prints a plan **derived from the adapters that will serve it** —
+endpoints, parameters, whether credentials are sent, minimum and worst-case request counts,
+pagination behaviour, and what will be retained. In live mode it then waits for you to type
+`yes`, unless `--yes-i-authorize-live-requests` is passed.
+
+| Flag | Effect |
+| --- | --- |
+| `--verify-top N` | re-fetches the top N shortlisted markets and marks them verified |
+| `--authenticated-mode` | authorises sending configured venue credentials |
+| `--yes-i-authorize-live-requests` | skips the interactive confirmation |
+
+**If venue credentials are configured, the command refuses to run** unless
+`--authenticated-mode` is given, because the plan it displays is the credential-free one
+and an authorisation based on a false plan is worthless.
+
+Bounds: one page per venue; a returned cursor is counted and reported but **never
+followed**; source catalogues stay in memory and only the capped shortlist is persisted;
+existing human dispositions (approved, rejected, suspended, expert review, under review)
+are restored first and never overwritten.
+
+### Request cost of REST paper trading
+
+Live REST paper trading fetches a **fresh snapshot at each simulated leg's arrival**, so a
+paper trade costs two additional rate-limited market-data requests beyond the polling
+cycle. Without that, leg 2 would re-read leg 1's snapshot and every fill would appear
+clean. See `docs/risk-model.md`.

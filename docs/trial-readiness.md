@@ -15,14 +15,14 @@ Tracks the agreed plan toward a supervised smoke test and then an unattended pap
 
 | # | Step | Status |
 | --- | --- | --- |
-| 1 | Review venue terms and developer agreement | **Partial** — Global reviewed; US review remains |
+| 1 | Review venue terms and developer agreement | **Done** — Global and US both reviewed |
 | 2 | Watched-pair configuration and targeted refresh | **Done** |
 | 3 | Persistence and safe approval restore | **Done** |
 | 4 | Continuous synchronization; resolve sequence behaviour | **Done** |
 | 5 | Continuous scanning and automated paper execution | **Done** |
 | 6 | Retention and operational hardening | **Done** |
-| 7 | Supervised live read-only smoke test | Blocked on Polymarket US adapter and human gates |
-| 8 | Unattended paper trial | Blocked on step 7 evidence |
+| 7 | Supervised live read-only smoke test | Blocked on human gates only; the adapter is implemented |
+| 8 | Unattended paper trial | Blocked on step 7 evidence and the F2/F5/F6 remediations |
 
 ## What is done
 
