@@ -92,8 +92,14 @@ application's strictness, so tests get their own config at the same strictness i
 Optional read-only live tests are marked and **deselected by default**:
 
 ```bash
-.venv/bin/pytest -m live               # opt-in schema checks; read-only, places no orders
+EVENT_ARB_RUN_LIVE_TESTS=1 .venv/bin/pytest -m live   # read-only schema checks
 ```
+
+Both the `live` marker and `EVENT_ARB_RUN_LIVE_TESTS=1` are required. An autouse guard
+blocks the real HTTP transport and raw sockets for every other test, so an ordinary test
+cannot reach a venue even if it builds a live client by mistake. Opted-in live tests are
+additionally restricted to `GET`/`HEAD`/`OPTIONS`, so they cannot write to a venue even if
+one later grows a `POST`.
 
 ## Documentation
 

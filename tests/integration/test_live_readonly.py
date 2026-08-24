@@ -13,7 +13,9 @@ schema out from under the assumptions recorded in ``docs/api-assumptions.md``.
 
 from __future__ import annotations
 
+import json
 import os
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -112,3 +114,53 @@ def test_no_live_test_can_place_an_order() -> None:
         assert not (forbidden & set(dir(client_class))), (
             f"{client_class.__name__} exposes an order-entry method"
         )
+
+
+# --------------------------------------------------------------- Polymarket US schema
+
+
+@skip_unless_opted_in
+async def test_polymarket_us_public_market_schema_still_matches_assumptions() -> None:
+    """Guards the corrections recorded in docs/api-assumptions.md for the US gateway.
+
+    Each of these was found by reading a live payload and each, if it silently changed,
+    would be mispriced rather than rejected:
+
+    - ``feeCoefficient`` per market — the US fee model is theta * C * p * (1-p), so losing
+      the published coefficient means falling back to a default that may not apply;
+    - ``outcomes`` as a JSON-encoded *string* — read undecoded it iterates characters;
+    - ``orderPriceMinTickSize`` finer than a penny — assuming 0.01 rounds real prices away;
+    - no ``resolutionSource`` — the absence is load-bearing, because approval requires a
+      named settlement authority and this venue does not publish one.
+    """
+    settings = PolymarketSettings(product=PolymarketProduct.US)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{settings.us_gateway_url}/v1/markets",
+            params={"active": "true", "closed": "false", "limit": 1},
+        )
+
+    assert response.status_code == 200, "the public gateway should need no credential"
+    payload = response.json()
+    markets = payload["markets"] if isinstance(payload, dict) else payload
+    assert isinstance(markets, list) and markets, "expected at least one open market"
+    market = markets[0]
+
+    assert "feeCoefficient" in market, "per-market fee coefficient disappeared"
+    assert Decimal(str(market["feeCoefficient"])) >= 0
+
+    assert isinstance(market["outcomes"], str), (
+        "outcomes is documented as a JSON-encoded string; a list here means the shape "
+        "changed and the mapper's json.loads would now fail"
+    )
+    assert json.loads(market["outcomes"]), "outcomes decoded to nothing"
+
+    tick = Decimal(str(market["orderPriceMinTickSize"]))
+    assert tick > 0, "a non-positive tick would make depth walking meaningless"
+
+    assert "resolutionSource" not in market, (
+        "the US gateway began publishing a settlement source; approval readiness treats "
+        "its absence as a blocker, so this is a change worth acting on"
+    )
+
+    assert str(market["status"]).startswith("MARKET_STATUS_"), "status enum shape changed"
