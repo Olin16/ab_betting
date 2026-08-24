@@ -1,6 +1,36 @@
-# Supervised live read-only smoke test — PROPOSED, NOT EXECUTED
+# Supervised live read-only smoke test — APPROVED, BLOCKED, NOT EXECUTED
 
-**Status: awaiting explicit approval. No request in this document has been sent.**
+**Status: approved by the operator on 2026-08-24, then blocked at the preflight gate. No
+request in this document has been sent.**
+
+> ## Execution blocker — recorded 2026-08-24
+>
+> The preflight gate in §7.2 requires that the **derived** request plan match §1 exactly.
+> It does not. The plan is derived by `event_arb.candidates.build_request_plan`, which is
+> the only request plan in the codebase, and it describes **three** of the five rows in §1:
+>
+> | §1 row | Endpoint | In derived plan? |
+> | --- | --- | --- |
+> | 1 | `GET .../trade-api/v2/markets` | yes |
+> | 2 | `GET .../v1/markets` | yes |
+> | 3 | `GET .../v1/market/slug/{id}` | yes |
+> | 4 | `GET .../trade-api/v2/markets/{ticker}/orderbook` | **no** |
+> | 5 | `GET .../v1/markets/{id}/book` | **no** |
+>
+> The derived plan additionally asserts `order books fetched : 0 (candidate research
+> never reads depth)` and a worst case of **27** requests, against §1's **31**.
+>
+> This is a gap in the *runner*, not in the endpoints: both `fetch_orderbook`
+> implementations already target exactly the §1 row 4 and row 5 paths, one request per
+> market. What is missing is a bounded command that fetches books for a hand-picked pair
+> set **and declares them in a derived plan first**. `candidates discover` deliberately
+> never reads depth; `scan` and `trial` do read depth but print no derived plan, take
+> their market set from `TRIAL__WATCHED_PAIRS` rather than from the shortlist, and re-run
+> discovery, which would issue catalogue requests beyond the §1 budget.
+>
+> Success criteria **3**, **5** and **6** in §5 depend on rows 4 and 5, so they cannot be
+> evaluated until this is closed. Per §7 the correct response is to stop, not to
+> substitute a different command for the approved one.
 
 The purpose is narrow: confirm that the two public REST surfaces still behave as
 `docs/api-assumptions.md` records, under supervision, at the smallest scope that can answer
