@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from event_arb.domain.models import OrderBook
 
-__all__ = ["FreshnessPolicy", "FreshnessVerdict"]
+__all__ = ["FreshnessPolicy", "FreshnessVerdict", "RefreshTiming"]
 
 
 @dataclass(frozen=True)
@@ -63,3 +63,47 @@ class FreshnessPolicy:
     @property
     def max_age(self) -> timedelta:
         return timedelta(milliseconds=self.max_age_ms)
+
+
+@dataclass
+class RefreshTiming:
+    """Observed timing of REST refresh batches.
+
+    The freshness bound has to be justified by what refreshing actually costs, not by a
+    guessed constant. A bound below the observed cost rejects every book; a bound far above
+    it silently accepts genuinely stale prices. Measuring closes both gaps, and measuring
+    the **batch** matters because books are refreshed serially: the first market fetched is
+    already one batch-duration old by the time the scan runs.
+    """
+
+    #: Wall-clock seconds for the most recent full refresh batch.
+    last_batch_seconds: float = 0.0
+    #: Requests issued in that batch.
+    last_batch_requests: int = 0
+    #: Slowest batch observed, which is what a bound must actually accommodate.
+    worst_batch_seconds: float = 0.0
+    batches_observed: int = 0
+
+    def record(self, duration_seconds: float, requests: int) -> None:
+        self.last_batch_seconds = duration_seconds
+        self.last_batch_requests = requests
+        self.worst_batch_seconds = max(self.worst_batch_seconds, duration_seconds)
+        self.batches_observed += 1
+
+    def required_age_ms(self, cycle_seconds: float, clock_tolerance_seconds: float) -> int:
+        """Smallest bound that a cycle of this observed cost can actually satisfy.
+
+        A book is at worst one cycle old, plus the batch it was fetched in, plus clock
+        tolerance. Before anything has been observed this reduces to the cycle plus
+        tolerance, which is the same conservative answer as before but stops being a guess
+        as soon as real timings arrive.
+        """
+        return int((cycle_seconds + self.worst_batch_seconds + clock_tolerance_seconds) * 1000)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "last_batch_seconds": round(self.last_batch_seconds, 3),
+            "last_batch_requests": self.last_batch_requests,
+            "worst_batch_seconds": round(self.worst_batch_seconds, 3),
+            "batches_observed": self.batches_observed,
+        }

@@ -8,6 +8,7 @@ so a caller can scan once, scan on a timer, or scan on demand from an HTTP reque
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -27,7 +28,7 @@ from event_arb.observability.health import HealthReport, build_health_report
 from event_arb.observability.logging import get_logger
 from event_arb.opportunities.service import OpportunityService, ScanResult
 from event_arb.orderbooks.book import BookStore
-from event_arb.orderbooks.freshness import FreshnessPolicy
+from event_arb.orderbooks.freshness import FreshnessPolicy, RefreshTiming
 from event_arb.paper.executor import PaperExecutor, PaperTrade
 from event_arb.paper.portfolio import PaperPortfolio
 from event_arb.persistence.database import Database
@@ -126,6 +127,8 @@ class Scanner:
         self.database = database
         self.adapters = adapters or build_adapters(settings)
         self.store = BookStore(FreshnessPolicy(max_age_ms=settings.opportunity.max_book_age_ms))
+        #: Observed refresh cost, used to justify the freshness bound rather than guess it.
+        self.refresh_timing = RefreshTiming()
         self.state = ScannerState()
         self.opportunities = OpportunityService(
             self.store,
@@ -247,6 +250,8 @@ class Scanner:
         """
         targets = market_ids if market_ids is not None else self.watched_markets()
         books: list[OrderBook] = []
+        started = time.monotonic()
+        requests = 0
 
         for venue, ids in targets.items():
             adapter = self.adapters.get(venue)
@@ -256,6 +261,7 @@ class Scanner:
                 market = self.state.markets.get((venue, market_id))
                 if market is not None and not market.is_tradable:
                     continue
+                requests += 1
                 try:
                     book = await adapter.fetch_orderbook(market_id)
                 except Exception as exc:
@@ -269,6 +275,8 @@ class Scanner:
                     continue
                 self.store.put(book)
                 books.append(book)
+
+        self.refresh_timing.record(time.monotonic() - started, requests)
         return books
 
     async def refresh_all_books(self) -> list[OrderBook]:

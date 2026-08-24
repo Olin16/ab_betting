@@ -467,6 +467,11 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
 
     budget = settings.validate_freshness_budget()
     print(f"  poll cycle          : {settings.trial.cycle_interval_seconds}s")
+    print(
+        f"  est refresh batch   : {settings.trial.estimated_batch_seconds():.2f}s "
+        f"({len(settings.trial.watched_pairs) * 2 or 'no'} watched market(s))"
+    )
+    print(f"  required book age   : {settings.trial.required_book_age_ms()}ms")
     print(f"  freshness budget    : {'OK' if budget is None else 'TOO TIGHT'}")
     if budget:
         print(f"    {budget}")

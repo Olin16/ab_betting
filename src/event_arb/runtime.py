@@ -92,6 +92,7 @@ class TrialRunner:
         self._synchronizer = BookSynchronizer(scanner.store, scanner.adapters)
         self._tasks: list[asyncio.Task[None]] = []
         self._stopping = asyncio.Event()
+        self._budget_warned = False
         self.stats = TrialStats()
 
     @property
@@ -177,6 +178,16 @@ class TrialRunner:
                 books = await self._scanner.refresh_books()
                 await self._scanner.record_books(books)
                 self.stats.refreshes += 1
+                # Re-check the budget against what refreshing actually cost.
+                measured = self._scanner.refresh_timing.worst_batch_seconds
+                budget_warning = self._settings.validate_freshness_budget(measured)
+                if budget_warning and not self._budget_warned:
+                    self._budget_warned = True
+                    log.warning(
+                        "trial.freshness_budget_measured",
+                        detail=budget_warning,
+                        **self._scanner.refresh_timing.as_dict(),
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

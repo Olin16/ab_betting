@@ -182,9 +182,11 @@ class TrialSettings(BaseModel):
     #: by the Kalshi Developer Agreement §3.1; see docs/compliance.md.
     snapshot_retention_hours: int = 72
 
-    #: Allowance for request latency and clock tolerance when checking that the freshness
-    #: bound can actually be met by a polling cycle.
-    expected_request_latency_seconds: float = 2.0
+    #: Clock tolerance between our receipt timestamps and the scan clock. Not a stand-in
+    #: for request latency, which is measured rather than assumed once a refresh has run.
+    clock_tolerance_seconds: float = 0.5
+    #: Fallback per-request estimate used only before any refresh has been observed.
+    assumed_request_seconds: float = 0.4
 
     @property
     def is_configured(self) -> bool:
@@ -195,14 +197,28 @@ class TrialSettings(BaseModel):
         """One refresh-then-scan cycle takes the longer of the two intervals."""
         return max(self.refresh_interval_seconds, self.scan_interval_seconds)
 
-    def required_book_age_ms(self) -> int:
-        """Smallest freshness bound a polling cycle can actually satisfy.
+    def required_book_age_ms(self, observed_batch_seconds: float | None = None) -> int:
+        """Smallest freshness bound this cycle can actually satisfy.
 
-        A book is at worst one full cycle old plus the time the refresh request itself
-        took. A bound below this rejects every book; a bound far above it silently accepts
-        genuinely stale data. Both are reported rather than assumed.
+        A book is at worst one full cycle old, plus the refresh batch it was fetched in
+        (books are refreshed serially, so the first is already a batch old when the scan
+        runs), plus clock tolerance.
+
+        ``observed_batch_seconds`` comes from a real refresh once one has happened. Before
+        that the batch is estimated from the number of watched markets — a stated estimate
+        rather than a magic constant.
         """
-        return int((self.cycle_interval_seconds + self.expected_request_latency_seconds) * 1000)
+        batch = (
+            observed_batch_seconds
+            if observed_batch_seconds is not None
+            else self.estimated_batch_seconds()
+        )
+        return int((self.cycle_interval_seconds + batch + self.clock_tolerance_seconds) * 1000)
+
+    def estimated_batch_seconds(self) -> float:
+        """Estimated serial refresh cost before any batch has been observed."""
+        markets = max(1, len(self.watched_pairs) * 2)
+        return markets * self.assumed_request_seconds
 
 
 class PaperSettings(BaseModel):
@@ -292,23 +308,32 @@ class Settings(BaseSettings):
                 "127.0.0.1, or set a token and put an authenticating proxy in front."
             )
 
-    def validate_freshness_budget(self) -> str | None:
+    def validate_freshness_budget(self, observed_batch_seconds: float | None = None) -> str | None:
         """Return a warning when the freshness bound cannot be met by the poll cycle.
 
         Returns ``None`` when the configuration is coherent. Deliberately a warning rather
         than a hard failure: fixture runs legitimately use a tiny cycle, and the operator
-        may be running a faster feed than the defaults assume.
+        may be running a faster feed than the estimate assumes. Once a refresh has been
+        observed, pass its duration so the check uses measurement instead of estimate.
         """
-        required = self.trial.required_book_age_ms()
+        required = self.trial.required_book_age_ms(observed_batch_seconds)
         if self.opportunity.max_book_age_ms >= required:
             return None
+        basis = "measured" if observed_batch_seconds is not None else "estimated"
+        batch = (
+            observed_batch_seconds
+            if observed_batch_seconds is not None
+            else self.trial.estimated_batch_seconds()
+        )
+        markets = len(self.trial.watched_pairs) * 2
         return (
-            f"max_book_age_ms={self.opportunity.max_book_age_ms} is below the "
-            f"{required}ms a {self.trial.cycle_interval_seconds}s poll cycle needs "
-            f"(plus {self.trial.expected_request_latency_seconds}s request latency). "
-            "Books will be judged stale before the next refresh lands. Either shorten "
-            "the cycle or raise the bound, accepting that a higher bound means acting on "
-            "older prices."
+            f"max_book_age_ms={self.opportunity.max_book_age_ms} is below the {required}ms "
+            f"this configuration needs: a {self.trial.cycle_interval_seconds}s cycle, a "
+            f"{basis} {batch:.2f}s refresh batch for "
+            f"{markets or 'the watched'} market(s), and "
+            f"{self.trial.clock_tolerance_seconds}s clock tolerance. Books will be judged "
+            "stale before the next refresh lands. Shorten the cycle, watch fewer pairs, or "
+            "raise the bound - accepting that a higher bound means acting on older prices."
         )
 
     def validate_live_market_data(self) -> None:

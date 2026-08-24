@@ -56,15 +56,18 @@ def test_a_coherent_budget_produces_no_warning() -> None:
     assert settings.validate_freshness_budget() is None
 
 
-def test_required_bound_accounts_for_cycle_plus_latency() -> None:
+def test_required_bound_accounts_for_cycle_batch_and_tolerance() -> None:
+    """The bound is derived, not guessed: cycle + refresh batch + clock tolerance."""
     trial = TrialSettings(
         refresh_interval_seconds=5.0,
         scan_interval_seconds=3.0,
-        expected_request_latency_seconds=2.0,
+        clock_tolerance_seconds=0.5,
     )
-    # Cycle is the longer of the two intervals, plus request latency.
     assert trial.cycle_interval_seconds == 5.0
-    assert trial.required_book_age_ms() == 7000
+    # No pairs configured -> one estimated request of 0.4s.
+    assert trial.required_book_age_ms() == 5900
+    # A measured 1.5s batch replaces the estimate.
+    assert trial.required_book_age_ms(observed_batch_seconds=1.5) == 7000
 
 
 # ------------------------------------------------------------- cycle ordering
