@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -612,6 +613,44 @@ class Scanner:
             return
         async with self._db_lock, self.database.session() as session:
             await AuditLogRepository(session).append(actor, action, subject, detail)
+
+    async def load_dispositions(self) -> dict[str, MarketPair]:
+        """Read stored pairs **verbatim**, validating and mutating nothing.
+
+        :meth:`restore` is the wrong tool for candidate research. It re-verifies every
+        approval against current rules, and an approval can only survive that check when
+        both legs were fetched from the venue *this run*. Candidate research fetches a
+        bounded catalogue page, not the specific markets an old approval points at, so
+        restore saw them as unobserved and suspended every approved pair — turning a
+        read-only research command into one that silently revoked human decisions.
+
+        This returns a detached copy. Nothing here is written back, so a research run can
+        consult what a human already decided without being able to change it.
+        """
+        if self.database is None:
+            return {}
+        async with self._db_lock, self.database.session() as session:
+            return await MarketPairRepository(session).load_all()
+
+    async def persist_new_pairs(self, pairs: Iterable[MarketPair]) -> int:
+        """Write only pairs that do not already exist. Returns how many were written.
+
+        Deliberately not :meth:`persist_pairs`, which rewrites everything in state. A
+        research run must be incapable of overwriting a stored disposition, so existence is
+        checked against storage inside the same transaction rather than against memory.
+        """
+        if self.database is None:
+            return 0
+        written = 0
+        async with self._db_lock, self.database.session() as session:
+            repository = MarketPairRepository(session)
+            stored = set(await repository.load_ids())
+            for pair in pairs:
+                if pair.id in stored:
+                    continue
+                await repository.save(pair)
+                written += 1
+        return written
 
     async def restore(self) -> RestoreReport:
         """Load persisted state, re-verifying every approval against current rules.

@@ -210,6 +210,10 @@ class MarketPairRepository:
         rows = (await self._session.scalars(select(MarketPairRow))).all()
         return {r.id: self._to_domain(r) for r in rows}
 
+    async def load_ids(self) -> set[str]:
+        """Just the ids, for callers that only need to know what already exists."""
+        return set((await self._session.scalars(select(MarketPairRow.id))).all())
+
     @staticmethod
     def _to_domain(row: MarketPairRow) -> MarketPair:
         raw = row.rule_differences or {}

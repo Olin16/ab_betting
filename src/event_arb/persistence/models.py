@@ -109,9 +109,22 @@ class VenueMarketRow(Base):
 
 class MarketPairRow(Base):
     __tablename__ = "market_pairs"
-    __table_args__ = (UniqueConstraint("kalshi_market_id", "polymarket_market_id", name="uq_pair"),)
+    # Product is part of pair uniqueness. Without it, the same two venue ids on Polymarket
+    # Global and Polymarket US are one row, so persisting both raises IntegrityError even
+    # though they are different contracts on different venues.
+    __table_args__ = (
+        UniqueConstraint(
+            "kalshi_market_id",
+            "polymarket_market_id",
+            "polymarket_product",
+            name="uq_pair",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: The id this pair had before pair ids included the product, or NULL if it was created
+    #: after. Kept so a rekeyed pair can still be traced to its pre-migration identity.
+    legacy_id: Mapped[str | None] = mapped_column(String(64), default=None)
     kalshi_market_id: Mapped[str] = mapped_column(String(255))
     polymarket_market_id: Mapped[str] = mapped_column(String(255))
     #: Which Polymarket product the second leg refers to. Rows predating product identity

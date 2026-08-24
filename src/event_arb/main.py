@@ -353,8 +353,10 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     else:
         print("  MODE: FIXTURE - no network request will be made.")
 
-    await scanner.restore()
-    existing = dict(scanner.state.pairs)
+    # Read-only. restore() would re-verify every approval against markets this run has
+    # not fetched, and suspend them all — a research command must not be able to revoke a
+    # human decision. See Scanner.load_dispositions.
+    existing = await scanner.load_dispositions()
 
     kalshi_markets, kalshi_cursor = await _discover_limited(
         scanner, Venue.KALSHI, limits.kalshi_limit
@@ -413,17 +415,14 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
 
 
 async def _persist_shortlist(scanner: Scanner, report: object) -> None:
-    """Store the capped shortlist as suggested pairs, preserving human dispositions."""
-    from event_arb.domain.enums import MatchStatus as _MatchStatus
+    """Store the capped shortlist, and only ever as *new* suggested pairs.
 
-    stored = 0
-    for record in report.records:  # type: ignore[attr-defined]
-        existing = scanner.state.pairs.get(record.pair.id)
-        if existing is not None and existing.status is not _MatchStatus.SUGGESTED:
-            continue
-        scanner.state.pairs[record.pair.id] = record.pair
-        stored += 1
-    await scanner.persist_pairs()
+    Existence is checked against storage rather than against memory, and pairs that already
+    exist are skipped entirely rather than rewritten. A research run therefore cannot
+    revoke, approve, downgrade, or otherwise alter a disposition a human recorded — the
+    write path has no way to express it.
+    """
+    stored = await scanner.persist_new_pairs(record.pair for record in report.records)  # type: ignore[attr-defined]
     await scanner.audit(
         "candidates-discover",
         "candidates.shortlist_persisted",
