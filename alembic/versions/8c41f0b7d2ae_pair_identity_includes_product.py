@@ -15,7 +15,7 @@ This migration rekeys every legacy pair — not only approved ones — to the pr
 and repoints dependent rows.
 
 **Approvals are cleared.** Any rekeyed row that was ``manually_approved`` is set to
-``suspended`` with ``manually_approved = 0``. The approval was recorded against an identity
+``suspended`` with ``manually_approved`` false. The approval was recorded against an identity
 that did not distinguish the two products, so it cannot be carried forward; the pair must
 be re-reviewed under its new id. This is deliberately destructive of the approval flag and
 nothing else.
@@ -30,6 +30,11 @@ contents are written to ``audit_log`` before deletion, so nothing is lost silent
 **Ordering.** New rows are inserted, children are repointed, then old rows are deleted.
 That order never leaves a dangling foreign key, so it is safe whether or not the database
 enforces them — SQLite usually does not, PostgreSQL always does.
+
+**Verified on PostgreSQL 16.15** (2026-08-24) as well as SQLite, with seeded pre-migration
+rows and foreign keys enforced: upgrade, downgrade, re-upgrade, and full chain to base and
+back. PostgreSQL is where the ordering actually matters — it enforces
+``opportunities.pair_id -> market_pairs.id``, which SQLite leaves off by default.
 
 **Downgrade** restores the two-column constraint and rekeys back using ``legacy_id``. It
 cannot resurrect superseded rows or restore cleared approvals: neither is recoverable from
@@ -243,14 +248,18 @@ def upgrade() -> None:
                 )
 
         # 4. An approval recorded under an ambiguous identity cannot survive it.
-        if old_id != new_id and int(winner["manually_approved"] or 0):
+        # bool() not int(): PostgreSQL returns a real bool here, SQLite an int.
+        if old_id != new_id and bool(winner["manually_approved"]):
             connection.execute(
                 sa.text(
-                    "UPDATE market_pairs SET status = 'suspended', manually_approved = 0, "
-                    "reviewer_notes = :note WHERE id = :id"
+                    # Bind the boolean rather than writing a literal 0: SQLite accepts
+                    # 0 for a boolean column, PostgreSQL rejects it outright.
+                    "UPDATE market_pairs SET status = 'suspended', "
+                    "manually_approved = :approved, reviewer_notes = :note WHERE id = :id"
                 ),
                 {
                     "id": new_id,
+                    "approved": False,
                     "note": (
                         "[migration 8c41f0b7d2ae] approval cleared: it was recorded against "
                         f"pair id {old_id}, which did not distinguish the Polymarket "
