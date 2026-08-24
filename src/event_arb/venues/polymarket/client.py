@@ -67,6 +67,15 @@ class PolymarketClient(VenueAdapter):
         #: condition_id -> {"YES": token_id, "NO": token_id}
         self._token_ids: dict[str, dict[str, str]] = {}
 
+    @property
+    def discovery_base_url(self) -> str:
+        return self._settings.global_clob_base_url
+
+    @property
+    def sends_credentials(self) -> bool:
+        """Read-only Global market data needs no credential."""
+        return False
+
     # ------------------------------------------------------------------ compliance
 
     async def check_geoblock(self, force: bool = False) -> GeoblockStatus:

@@ -62,6 +62,27 @@ def us_market(index: int) -> VenueMarket:
     )
 
 
+class _StubAdapter:
+    """Minimal stand-in exposing what the planner reads off a real adapter."""
+
+    def __init__(self, base_url: str, sends_credentials: bool = False) -> None:
+        self.discovery_base_url = base_url
+        self.sends_credentials = sends_credentials
+
+
+def make_plan(**overrides: object) -> object:
+    kalshi = _StubAdapter(
+        str(overrides.get("kalshi_url", "https://kalshi.test/v2")),
+        bool(overrides.get("kalshi_auth", False)),
+    )
+    polymarket = _StubAdapter(
+        str(overrides.get("polymarket_url", "https://pmus.test")),
+        bool(overrides.get("polymarket_auth", False)),
+    )
+    product = overrides.get("product", VenueProduct.POLYMARKET_US)
+    return build_request_plan(LIMITS, kalshi, polymarket, product)  # type: ignore[arg-type]
+
+
 LIMITS = DiscoveryLimits(
     kalshi_limit=250,
     polymarket_limit=250,
@@ -76,33 +97,33 @@ LIMITS = DiscoveryLimits(
 
 
 def test_plan_declares_both_bounded_pages_and_the_worst_case() -> None:
-    plan = build_request_plan(LIMITS, "https://kalshi.test/v2", "https://pmus.test")
-    assert plan.minimum_requests == 2
-    assert plan.worst_case_requests == 2 + LIMITS.verify_top
+    built = make_plan()
+    assert built.minimum_requests == 2
+    assert built.worst_case_requests == 2 + LIMITS.verify_top
 
 
 def test_plan_states_no_credentials_are_sent() -> None:
-    rendered = build_request_plan(LIMITS, "https://k.test", "https://p.test").render()
-    assert "credentials sent    : none" in rendered
-    for entry in build_request_plan(LIMITS, "https://k.test", "https://p.test").entries:
-        assert "none" in str(entry["headers"]).lower()
+    rendered = make_plan().render()
+    assert "credentials         : none" in rendered
+    for entry in make_plan().entries:
+        assert entry.sends_credentials is False
 
 
 def test_plan_states_no_order_books_and_no_websockets() -> None:
-    rendered = build_request_plan(LIMITS, "https://k.test", "https://p.test").render()
+    rendered = make_plan().render()
     assert "order books fetched : 0" in rendered
     assert "websockets opened   : 0" in rendered
 
 
 def test_plan_states_pagination_is_not_followed() -> None:
-    plan = build_request_plan(LIMITS, "https://k.test", "https://p.test")
-    assert "NOT followed" in plan.pagination
+    built = make_plan()
+    assert "NOT followed" in built.pagination
 
 
 def test_plan_bounds_local_comparisons_at_the_stated_scope() -> None:
     """250 x 250 = 62,500 local comparisons, costing no requests."""
     assert LIMITS.max_local_comparisons == 62_500
-    assert "62,500" in build_request_plan(LIMITS, "https://k.test", "https://p.test").render()
+    assert "62,500" in make_plan().render()
 
 
 # ---------------------------------------------------------------------- bounds
@@ -265,3 +286,34 @@ def test_scope_matches_the_documented_initial_test_bounds() -> None:
     assert LIMITS.max_per_market == 3
     assert LIMITS.max_results == 100
     assert LIMITS.verify_top == 25
+
+
+# ------------------------------------------------- verification and cursors
+
+
+def test_verified_defaults_to_false_until_re_fetched() -> None:
+    report = research_candidates(
+        [kalshi_market(0)], [us_market(0)], DiscoveryLimits(min_score=Decimal("0"))
+    )
+    assert report.records[0].verified is False
+    assert report.verified == 0
+
+
+def test_a_record_can_be_marked_verified() -> None:
+    """The CLI sets this after re-fetching; the field is not decorative."""
+    from dataclasses import replace
+
+    report = research_candidates(
+        [kalshi_market(0)], [us_market(0)], DiscoveryLimits(min_score=Decimal("0"))
+    )
+    marked = replace(report.records[0], verified=True)
+    assert marked.verified is True
+    assert marked.as_dict()["targeted_reverify"] is True
+
+
+def test_cursor_count_is_reported_in_the_summary() -> None:
+    report = research_candidates(
+        [kalshi_market(0)], [us_market(0)], DiscoveryLimits(min_score=Decimal("0"))
+    )
+    report.pagination_cursors_ignored = 2
+    assert report.as_dict()["pagination_cursors_ignored"] == 2

@@ -55,6 +55,17 @@ class PolymarketUSClient(VenueAdapter):
         # Documented at 20 req/s per IP; the configured default is well under that. A rate
         # limit is a term of use, not a performance target.
         self._limiter = RateLimiter(settings.requests_per_second)
+        #: Cursor from the last discovery response; reported, never followed.
+        self.last_pagination_cursor: str | None = None
+
+    @property
+    def discovery_base_url(self) -> str:
+        return self._base_url
+
+    @property
+    def sends_credentials(self) -> bool:
+        """Always False: this client holds no credentials and only uses the public gateway."""
+        return False
 
     # ------------------------------------------------------------------- internals
 
@@ -111,6 +122,9 @@ class PolymarketUSClient(VenueAdapter):
         if limit is not None:
             params["limit"] = limit
         payload = await self._get("/v1/markets", params=params)
+        if isinstance(payload, dict):
+            cursor = payload.get("cursor") or payload.get("nextCursor")
+            self.last_pagination_cursor = cursor if isinstance(cursor, str) and cursor else None
 
         markets: list[VenueMarket] = []
         for entry in self._entries(payload):

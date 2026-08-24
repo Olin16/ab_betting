@@ -246,3 +246,32 @@ async def test_response_bodies_are_decoded_without_float_contamination() -> None
     )
     book = await client.fetch_orderbook("KX-TEST")
     assert isinstance(book.yes.bids[0].price, Decimal)
+
+
+async def test_pagination_cursor_is_recorded_but_not_followed() -> None:
+    """One page per authorisation. Following a cursor would exceed what was approved."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, json={"cursor": "next-page-token", "markets": [MARKET]})
+
+    client = client_with(handler)
+    markets = await client.discover_markets(limit=10)
+
+    assert calls["n"] == 1, "a cursor must not trigger a second request"
+    assert len(markets) == 1
+    assert client.last_pagination_cursor == "next-page-token"
+
+
+async def test_absent_cursor_leaves_the_field_none() -> None:
+    client = client_with(lambda request: httpx.Response(200, json={"markets": []}))
+    await client.discover_markets()
+    assert client.last_pagination_cursor is None
+
+
+async def test_client_exposes_its_real_endpoint_and_auth_state() -> None:
+    """The request planner reads these; they must not be aspirational."""
+    client = client_with(lambda request: httpx.Response(200, json={"markets": []}))
+    assert client.discovery_base_url.startswith("https://external-api.kalshi.com")
+    assert client.sends_credentials is False

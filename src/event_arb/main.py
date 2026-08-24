@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -285,11 +286,13 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     _banner(settings)
 
     from event_arb.candidates import (
+        CredentialsWouldBeSentError,
         DiscoveryLimits,
         build_request_plan,
         research_candidates,
         top_slugs_for_verification,
     )
+    from event_arb.persistence.database import Database
 
     limits = DiscoveryLimits(
         kalshi_limit=args.kalshi_limit,
@@ -301,10 +304,22 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     )
 
     live = settings.data_source is DataSource.LIVE
+    if live:
+        settings.validate_live_market_data()
+
+    # The database is opened first: dispositions must be restored *before* generation, or
+    # the run would propose pairs a human has already decided about.
+    database = Database(settings.database_url)
+    await database.create_all()
+    scanner = Scanner(settings, database=database)
+
+    # The plan is derived from the adapters that will serve the requests, so it cannot
+    # drift from what is actually sent.
     plan = build_request_plan(
         limits,
-        settings.kalshi.rest_base_url,
-        settings.polymarket.us_gateway_url,
+        scanner.adapters[Venue.KALSHI],
+        scanner.adapters[Venue.POLYMARKET],
+        scanner.polymarket_product,
     )
 
     print()
@@ -312,26 +327,54 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     print()
 
     if live:
-        settings.validate_live_market_data()
-        print("  MODE: LIVE — the requests above will be sent to the venues.")
+        if plan.sends_any_credentials and not args.authenticated_mode:
+            await scanner.close()
+            raise CredentialsWouldBeSentError(
+                "credentials are configured, so this run would transmit them, but the "
+                "plan above is the credential-free one. Re-run with --authenticated-mode "
+                "to authorize that explicitly, or unset the venue credentials."
+            )
+        print("  MODE: LIVE - the requests above will be sent to the venues.")
         if not args.yes_i_authorize_live_requests:
-            # Offloaded so the blocking prompt never stalls the event loop.
             answer = await asyncio.to_thread(
                 input, "  Proceed with live requests? Type 'yes' to continue: "
             )
             if answer.strip().lower() != "yes":
                 print("  Aborted. No request was made.")
+                await scanner.close()
                 return 1
     else:
-        print("  MODE: FIXTURE — no network request will be made.")
+        print("  MODE: FIXTURE - no network request will be made.")
 
-    scanner = Scanner(settings)
-    kalshi_markets = await _discover_limited(scanner, Venue.KALSHI, limits.kalshi_limit)
-    polymarket_markets = await _discover_limited(scanner, Venue.POLYMARKET, limits.polymarket_limit)
+    await scanner.restore()
+    existing = dict(scanner.state.pairs)
+
+    kalshi_markets, kalshi_cursor = await _discover_limited(
+        scanner, Venue.KALSHI, limits.kalshi_limit
+    )
+    polymarket_markets, polymarket_cursor = await _discover_limited(
+        scanner, Venue.POLYMARKET, limits.polymarket_limit
+    )
 
     report = research_candidates(
-        kalshi_markets, polymarket_markets, limits, existing_pairs=scanner.state.pairs
+        kalshi_markets, polymarket_markets, limits, existing_pairs=existing
     )
+    report.pagination_cursors_ignored = sum(
+        1 for cursor in (kalshi_cursor, polymarket_cursor) if cursor
+    )
+
+    # Targeted re-verification: re-fetch the highest-scoring markets and mark them.
+    if limits.verify_top > 0 and report.records:
+        slugs = top_slugs_for_verification(report, limits)
+        refetched = await scanner.adapters[Venue.POLYMARKET].discover_markets(market_ids=slugs)
+        confirmed = {m.venue_market_id for m in refetched}
+        for index, record in enumerate(report.records):
+            if record.pair.polymarket_market_id in confirmed:
+                report.records[index] = replace(record, verified=True)
+        report.verified = sum(1 for record in report.records if record.verified)
+
+    # Only the capped shortlist is persisted; source catalogues stay in memory.
+    await _persist_shortlist(scanner, report)
 
     print("\n--- Research summary ---")
     for key, value in report.as_dict().items():
@@ -340,7 +383,8 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     print(f"\n--- Shortlist ({len(report.records)}) ---")
     for record in sorted(report.records, key=lambda r: r.score, reverse=True):
         state = "READY" if record.readiness.is_ready else "BLOCKED"
-        print(f"\n  [{state}] score={record.score}  pair={record.pair.id[:12]}")
+        mark = " [verified]" if record.verified else ""
+        print(f"\n  [{state}]{mark} score={record.score}  pair={record.pair.id[:12]}")
         print(f"    Kalshi     : {record.kalshi_title[:70]}")
         print(f"    Polymarket : {record.polymarket_title[:70]}")
         if record.comparison.material:
@@ -349,10 +393,11 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
         for code in record.readiness.blocker_codes:
             print(f"    blocker    : {code}")
 
-    if args.verify_top and report.records:
-        slugs = top_slugs_for_verification(report, limits)
-        print(f"\n  Targeted re-verification would fetch {len(slugs)} market(s).")
-        print("  Not performed automatically; re-run with the venue selected to confirm.")
+    if report.pagination_cursors_ignored:
+        print(
+            f"\n  {report.pagination_cursors_ignored} pagination cursor(s) returned and "
+            "deliberately NOT followed; re-run with a higher limit to see more."
+        )
 
     print("\n  NOTE: every entry above is a research candidate, never arbitrage.")
     print("  Nothing was approved, no order book was read, and no trade was simulated.")
@@ -360,13 +405,46 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
-async def _discover_limited(scanner: Scanner, venue: Venue, limit: int) -> list[VenueMarket]:
-    """One bounded page from one venue. Pagination is never followed silently."""
+async def _persist_shortlist(scanner: Scanner, report: object) -> None:
+    """Store the capped shortlist as suggested pairs, preserving human dispositions."""
+    from event_arb.domain.enums import MatchStatus as _MatchStatus
+
+    stored = 0
+    for record in report.records:  # type: ignore[attr-defined]
+        existing = scanner.state.pairs.get(record.pair.id)
+        if existing is not None and existing.status is not _MatchStatus.SUGGESTED:
+            continue
+        scanner.state.pairs[record.pair.id] = record.pair
+        stored += 1
+    await scanner.persist_pairs()
+    await scanner.audit(
+        "candidates-discover",
+        "candidates.shortlist_persisted",
+        detail={
+            "retained": stored,
+            "kalshi_markets_seen": report.kalshi_markets_seen,  # type: ignore[attr-defined]
+            "polymarket_markets_seen": report.polymarket_markets_seen,  # type: ignore[attr-defined]
+            "parse_failures": report.parse_failures,  # type: ignore[attr-defined]
+            "rate_limited": report.rate_limited,  # type: ignore[attr-defined]
+            "cursors_ignored": report.pagination_cursors_ignored,  # type: ignore[attr-defined]
+        },
+    )
+
+
+async def _discover_limited(
+    scanner: Scanner, venue: Venue, limit: int
+) -> tuple[list[VenueMarket], str | None]:
+    """One bounded page from one venue, plus any cursor we are declining to follow.
+
+    Returning the cursor rather than acting on it keeps "we fetched more than you
+    authorised" out of the code's hands.
+    """
     adapter = scanner.adapters.get(venue)
     if adapter is None:
-        return []
+        return [], None
     markets = await adapter.discover_markets(limit=limit)
-    return markets[:limit]
+    cursor = getattr(adapter, "last_pagination_cursor", None)
+    return markets[:limit], cursor if isinstance(cursor, str) and cursor else None
 
 
 async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
@@ -480,6 +558,15 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--max-per-market", type=int, default=3)
     discover.add_argument("--max-results", type=int, default=100)
     discover.add_argument("--verify-top", type=int, default=25)
+    discover.add_argument(
+        "--authenticated-mode",
+        action="store_true",
+        help=(
+            "authorize sending configured venue credentials. Without it the command "
+            "refuses to run when credentials are present, because the request plan it "
+            "shows is the credential-free one."
+        ),
+    )
     discover.add_argument(
         "--yes-i-authorize-live-requests",
         action="store_true",

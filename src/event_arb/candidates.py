@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from event_arb.domain.enums import MatchStatus
+from event_arb.domain.enums import MatchStatus, VenueProduct
 from event_arb.domain.models import MarketPair, VenueMarket
 from event_arb.matching.candidates import generate_candidates
 from event_arb.matching.readiness import ReadinessReport, assess_readiness
@@ -34,8 +34,10 @@ from event_arb.observability.logging import get_logger
 
 __all__ = [
     "CandidateRecord",
+    "CredentialsWouldBeSentError",
     "DiscoveryLimits",
     "DiscoveryReport",
+    "PlannedRequest",
     "RequestPlan",
     "build_request_plan",
     "research_candidates",
@@ -73,25 +75,50 @@ class DiscoveryLimits:
 
 
 @dataclass(frozen=True)
-class RequestPlan:
-    """Exactly what will be requested, declared before anything is sent."""
+class PlannedRequest:
+    """One request the run will actually make."""
 
-    entries: tuple[dict[str, object], ...]
+    method: str
+    url: str
+    params: dict[str, object] | str
+    sends_credentials: bool
+    purpose: str
+    count: str
+
+
+@dataclass(frozen=True)
+class RequestPlan:
+    """Exactly what will be requested, derived from the constructed adapters.
+
+    Built *from* the adapters rather than written alongside them. A plan composed
+    independently drifts from the code, and an operator authorising a request set that does
+    not match what is sent is the specific failure the confirmation gate exists to prevent.
+    """
+
+    entries: tuple[PlannedRequest, ...]
     minimum_requests: int
     worst_case_requests: int
     limits: DiscoveryLimits
     pagination: str
+    polymarket_product: VenueProduct
+    sends_any_credentials: bool
 
     def render(self) -> str:
-        lines = ["Request plan", "=" * 60]
+        lines = ["Request plan", "=" * 62]
         for entry in self.entries:
-            lines.append(f"  {entry['method']} {entry['url']}")
-            lines.append(f"      params : {entry['params']}")
-            lines.append(f"      headers: {entry['headers']}")
-            lines.append(f"      purpose: {entry['purpose']}")
-            lines.append(f"      count  : {entry['count']}")
+            auth = (
+                "SENDS CREDENTIALS (signed request headers)"
+                if entry.sends_credentials
+                else "(none - public endpoint, no credentials sent)"
+            )
+            lines.append(f"  {entry.method} {entry.url}")
+            lines.append(f"      params : {entry.params}")
+            lines.append(f"      headers: {auth}")
+            lines.append(f"      purpose: {entry.purpose}")
+            lines.append(f"      count  : {entry.count}")
         lines += [
-            "-" * 60,
+            "-" * 62,
+            f"  polymarket product  : {self.polymarket_product.value}",
             f"  minimum requests    : {self.minimum_requests}",
             f"  worst-case requests : {self.worst_case_requests}",
             f"  pagination          : {self.pagination}",
@@ -99,56 +126,73 @@ class RequestPlan:
             f"  persisted           : at most {self.limits.max_results} candidates",
             "  order books fetched : 0 (candidate research never reads depth)",
             "  websockets opened   : 0",
-            "  credentials sent    : none (both venues serve public market data)",
+            f"  credentials         : {'SENT' if self.sends_any_credentials else 'none'}",
         ]
         return "\n".join(lines)
 
 
-def build_request_plan(
-    limits: DiscoveryLimits, kalshi_url: str, polymarket_url: str
-) -> RequestPlan:
-    """Describe every request before any is issued.
+class CredentialsWouldBeSentError(RuntimeError):
+    """Raised when a credential-free run would in fact transmit credentials.
 
-    Headers are listed explicitly and are empty: public market data needs no credential,
-    and printing the header set makes an accidental credential obvious rather than
-    invisible. Any secret that did appear would be redacted by the logging pipeline.
+    Refusing is the point. The operator authorised a plan that said no credentials would be
+    sent; silently sending them would make that authorisation meaningless.
     """
-    entries: tuple[dict[str, object], ...] = (
-        {
-            "method": "GET",
-            "url": f"{kalshi_url}/markets",
-            "params": {"status": "open", "limit": limits.kalshi_limit},
-            "headers": "(none — public endpoint, no credentials sent)",
-            "purpose": "one bounded page of Kalshi market metadata",
-            "count": 1,
-        },
-        {
-            "method": "GET",
-            "url": f"{polymarket_url}/v1/markets",
-            "params": {
+
+
+def build_request_plan(
+    limits: DiscoveryLimits,
+    kalshi_adapter: object,
+    polymarket_adapter: object,
+    polymarket_product: VenueProduct,
+) -> RequestPlan:
+    """Describe every request, reading endpoints and auth state off the adapters."""
+    kalshi_base = str(getattr(kalshi_adapter, "discovery_base_url", "(fixture)"))
+    kalshi_auth = bool(getattr(kalshi_adapter, "sends_credentials", False))
+    polymarket_base = str(getattr(polymarket_adapter, "discovery_base_url", "(fixture)"))
+    polymarket_auth = bool(getattr(polymarket_adapter, "sends_credentials", False))
+
+    is_us = polymarket_product is VenueProduct.POLYMARKET_US
+    polymarket_list_path = "/v1/markets" if is_us else "/markets"
+    polymarket_one_path = "/v1/market/slug/{id}" if is_us else "/markets/{condition_id}"
+
+    entries = (
+        PlannedRequest(
+            method="GET",
+            url=f"{kalshi_base}/markets",
+            params={"status": "open", "limit": limits.kalshi_limit},
+            sends_credentials=kalshi_auth,
+            purpose="one bounded page of Kalshi market metadata",
+            count="1",
+        ),
+        PlannedRequest(
+            method="GET",
+            url=f"{polymarket_base}{polymarket_list_path}",
+            params={
                 "active": "true",
                 "closed": "false",
                 "limit": limits.polymarket_limit,
             },
-            "headers": "(none — public gateway, no API key required)",
-            "purpose": "one bounded page of Polymarket US market metadata",
-            "count": 1,
-        },
-        {
-            "method": "GET",
-            "url": f"{polymarket_url}/v1/market/slug/{{slug}}",
-            "params": "(one request per shortlisted market)",
-            "headers": "(none)",
-            "purpose": f"targeted re-fetch of the top {limits.verify_top} candidates",
-            "count": f"0..{limits.verify_top}",
-        },
+            sends_credentials=polymarket_auth,
+            purpose=(f"one bounded page of Polymarket {polymarket_product.value} market metadata"),
+            count="1",
+        ),
+        PlannedRequest(
+            method="GET",
+            url=f"{polymarket_base}{polymarket_one_path}",
+            params="(one request per shortlisted market)",
+            sends_credentials=polymarket_auth,
+            purpose=f"targeted re-verification of the top {limits.verify_top} candidates",
+            count=f"0..{limits.verify_top}",
+        ),
     )
     return RequestPlan(
         entries=entries,
         minimum_requests=2,
         worst_case_requests=2 + limits.verify_top,
         limits=limits,
-        pagination=("one page per venue; a returned cursor is reported and NOT followed"),
+        pagination="one page per venue; a returned cursor is reported and NOT followed",
+        polymarket_product=polymarket_product,
+        sends_any_credentials=kalshi_auth or polymarket_auth,
     )
 
 

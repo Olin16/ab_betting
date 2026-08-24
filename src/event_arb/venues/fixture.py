@@ -83,6 +83,15 @@ class FixtureAdapter(VenueAdapter):
         #: Simulated venue-to-local lag applied when rebasing recorded timestamps.
         self.replay_exchange_lag = timedelta(milliseconds=50)
 
+    @property
+    def discovery_base_url(self) -> str:
+        """No network is involved, and the plan says so rather than showing a live host."""
+        return f"(fixture corpus: {self._dir})"
+
+    @property
+    def sends_credentials(self) -> bool:
+        return False
+
     # ------------------------------------------------------------------- internals
 
     def _book_path(self, market_id: str) -> Path:

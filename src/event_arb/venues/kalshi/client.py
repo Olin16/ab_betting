@@ -52,6 +52,9 @@ class KalshiClient(VenueAdapter):
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._owns_client = client is None
         self._limiter = RateLimiter(settings.requests_per_second)
+        #: Cursor from the last discovery response. Recorded and reported, never followed:
+        #: fetching beyond an authorised page is not a decision code should take alone.
+        self.last_pagination_cursor: str | None = None
 
         # Signing is optional for market data. Kalshi serves series, events, markets and
         # order books over unauthenticated REST, so a credential-free read-only trial is
@@ -64,6 +67,21 @@ class KalshiClient(VenueAdapter):
             self._signer = KalshiSigner.from_path(settings.api_key_id, settings.private_key_path)
         else:
             self._signer = None
+
+    @property
+    def discovery_base_url(self) -> str:
+        """The base URL this client actually requests. Read by the request planner."""
+        return self._base_url
+
+    @property
+    def sends_credentials(self) -> bool:
+        """True when requests will carry signed auth headers.
+
+        The planner reports this verbatim. Kalshi market data is public, but this client
+        signs whenever credentials happen to be configured, so a plan claiming "no
+        credentials" would be false in exactly that case.
+        """
+        return self._signer is not None
 
     # ------------------------------------------------------------------ internals
 
@@ -117,6 +135,8 @@ class KalshiClient(VenueAdapter):
         if limit is not None:
             params["limit"] = min(limit, 1000)
         payload = await self._get("/markets", params=params)
+        cursor = payload.get("cursor")
+        self.last_pagination_cursor = cursor if isinstance(cursor, str) and cursor else None
         raw_markets = payload.get("markets", [])
         if not isinstance(raw_markets, list):
             raise MarketDataError("Kalshi /markets did not return a list", Venue.KALSHI)
