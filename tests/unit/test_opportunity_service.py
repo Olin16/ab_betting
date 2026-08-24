@@ -235,8 +235,35 @@ def test_cooldown_suppresses_a_repeated_alert() -> None:
     store.put(poly_book(later))
 
     second = service.scan([pair], markets(), now=later)
-    assert second.opportunities == []
-    assert any(r.reason is RejectionReason.COOLDOWN_ACTIVE for r in second.rejections)
+    assert second.opportunities == [], "must not re-announce inside the cooldown"
+
+    # But it was still detected. The cooldown governs alerting, not observation: a
+    # multi-week trial that recorded only the first sighting could not tell a persistent
+    # opportunity from a one-off, which is what separates a real edge from a stale quote.
+    assert len(second.alert_suppressed) == 1
+    suppressed = second.alert_suppressed[0]
+    assert suppressed.net_profit > 0
+    assert suppressed.executable_quantity > 0
+    assert len(second.all_detected) == 1
+
+
+def test_a_suppressed_detection_keeps_its_full_economics() -> None:
+    """It used to become a bare rejection, discarding size, prices and profit."""
+    service, store = build_service()
+    pair = approved_pair()
+    first = service.scan([pair], markets(), now=NOW)
+    original = first.opportunities[0]
+
+    later = NOW + timedelta(seconds=10)
+    store.put(kalshi_book(later))
+    store.put(poly_book(later))
+    suppressed = service.scan([pair], markets(), now=later).alert_suppressed[0]
+
+    assert suppressed.dedup_key == original.dedup_key
+    assert suppressed.executable_quantity == original.executable_quantity
+    assert suppressed.net_profit == original.net_profit
+    assert suppressed.kalshi_leg.vwap == original.kalshi_leg.vwap
+    assert suppressed.polymarket_leg.vwap == original.polymarket_leg.vwap
 
 
 def test_cooldown_expires() -> None:

@@ -220,6 +220,10 @@ class OpportunityRow(Base):
     expected_payout: Mapped[Decimal] = mapped_column(DecimalString)
     net_profit: Mapped[Decimal] = mapped_column(DecimalString)
     return_on_capital: Mapped[Decimal] = mapped_column(DecimalString)
+    #: True when this detection was real but not re-announced, because the same
+    #: opportunity had alerted within the cooldown window. Recorded so the evidence set is
+    #: complete while alert volume stays bounded; filter it out to count announcements.
+    alert_suppressed: Mapped[bool] = mapped_column(Boolean, default=False)
     risk_flags: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     detected_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)

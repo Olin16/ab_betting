@@ -457,6 +457,10 @@ class Scanner:
             opportunities = OpportunityRepository(session)
             for opportunity in result.opportunities:
                 await opportunities.record(opportunity)
+            # Suppressed detections are still detections. Persisting only the announced
+            # ones let the alert cooldown decide what the trial had observed.
+            for opportunity in result.alert_suppressed:
+                await opportunities.record(opportunity, alert_suppressed=True)
 
         if result.suspended_pairs:
             await self.persist_pairs()

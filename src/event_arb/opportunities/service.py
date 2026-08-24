@@ -43,9 +43,23 @@ class ScanResult:
     """Everything one scan cycle produced, including why candidates were dropped."""
 
     opportunities: list[Opportunity] = field(default_factory=list)
+    #: Detections that were real but not re-announced, because the same opportunity alerted
+    #: within the cooldown window. Kept as whole opportunities rather than rejection stubs
+    #: so the evidence record stays complete: over a multi-week trial the cooldown is an
+    #: alerting knob, and it must not decide what was observed.
+    alert_suppressed: list[Opportunity] = field(default_factory=list)
     rejections: list[RejectedOpportunity] = field(default_factory=list)
     suspended_pairs: list[MarketPair] = field(default_factory=list)
     scanned_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def all_detected(self) -> list[Opportunity]:
+        """Everything this cycle actually saw, announced or not.
+
+        Use this for evidence and persistence. Use :attr:`opportunities` for anything that
+        should happen once per cooldown window — alerting, and paper execution.
+        """
+        return [*self.opportunities, *self.alert_suppressed]
 
     @property
     def confirmed(self) -> list[Opportunity]:
@@ -197,27 +211,25 @@ class OpportunityService:
                     metrics.opportunities_rejected.labels(reason=outcome.reason.value).inc()
                     continue
 
-                # (5) Dedup + cooldown.
-                if self._cooldown_active(outcome.dedup_key, reference):
-                    result.rejections.append(
-                        RejectedOpportunity(
-                            pair_id=pair.id,
-                            direction=direction,
-                            reason=RejectionReason.COOLDOWN_ACTIVE,
-                            detail="suppressed by alert cooldown",
-                        )
-                    )
-                    metrics.opportunities_rejected.labels(
-                        reason=RejectionReason.COOLDOWN_ACTIVE.value
-                    ).inc()
-                    continue
-
                 extra = single_level_flag(
                     outcome.kalshi_leg.levels_consumed, outcome.polymarket_leg.levels_consumed
                 )
                 if extra:
                     merged = tuple(sorted({*outcome.risk_flags, *extra}, key=lambda f: f.value))
                     outcome = outcome.model_copy(update={"risk_flags": merged})
+
+                # (5) Dedup + cooldown. The opportunity is recorded either way; the
+                # cooldown only decides whether it is announced again. Recording it as a
+                # bare rejection used to discard its size, prices and profit, so a
+                # persistent opportunity read as one detection plus a run of suppressions —
+                # and how long an opportunity persists is exactly what distinguishes a real
+                # one from a stale-quote artifact.
+                if self._cooldown_active(outcome.dedup_key, reference):
+                    result.alert_suppressed.append(outcome)
+                    metrics.opportunities_rejected.labels(
+                        reason=RejectionReason.COOLDOWN_ACTIVE.value
+                    ).inc()
+                    continue
 
                 self._last_emitted[outcome.dedup_key] = reference
                 result.opportunities.append(outcome)

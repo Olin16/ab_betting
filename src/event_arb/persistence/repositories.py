@@ -251,10 +251,11 @@ class OpportunityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def record(self, opportunity: Opportunity) -> None:
+    async def record(self, opportunity: Opportunity, *, alert_suppressed: bool = False) -> None:
         self._session.add(
             OpportunityRow(
                 pair_id=opportunity.pair_id,
+                alert_suppressed=alert_suppressed,
                 direction=opportunity.direction.value,
                 label=opportunity.label.value,
                 executable_quantity=opportunity.executable_quantity,
