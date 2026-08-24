@@ -98,6 +98,20 @@ review, confirm state eligibility and any production API/conformance approval, a
 the current US fee schedule. No technical workaround or Global fallback is acceptable.
 Full detail is in `docs/compliance.md` and `docs/venue-roadmap.md`.
 
+## Credential requirements (resolved)
+
+A read-only paper trial needs **no credentials on either venue**, provided ingestion is
+REST polling:
+
+| | REST market data | WebSocket |
+| --- | --- | --- |
+| Kalshi | public, no key | **authenticated handshake, even for public channels** |
+| Polymarket US | public gateway, no key | authenticated API only |
+
+`ingestion_mode` defaults to `rest_polling`. Selecting `websocket` fails closed rather than
+starting a stream that cannot authenticate, and the dashboard no longer infers streaming
+from merely running in live mode.
+
 ## Human gates
 
 - [ ] Implement the read-only Polymarket US adapter from synthetic/recorded fixtures.

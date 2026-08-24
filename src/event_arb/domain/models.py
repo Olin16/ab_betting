@@ -103,12 +103,16 @@ class FeeConfig(_Frozen):
     #: Kalshi: the 0.07 coefficient. Polymarket: the category taker rate.
     taker_rate: Decimal
     maker_rate: Decimal = ZERO
+    #: Rebate **paid to** a maker, as a positive amount. Polymarket US publishes this as a
+    #: negative theta; it is held positive so that "rate" means "amount charged"
+    #: everywhere and a rebate can never be read as a fee by a caller that drops the sign.
+    maker_rebate_rate: Decimal = ZERO
     #: Kalshi per-series multiplier ``M`` in ``ceil(M * 0.07 * C * P * (1-P))``.
     multiplier: Decimal = Decimal("1")
     #: Source of these numbers, for auditing. Never trust an undocumented default.
     source: str = "default"
 
-    @field_validator("taker_rate", "maker_rate", "multiplier")
+    @field_validator("taker_rate", "maker_rate", "maker_rebate_rate", "multiplier")
     @classmethod
     def _non_negative(cls, v: Decimal) -> Decimal:
         if v < ZERO:

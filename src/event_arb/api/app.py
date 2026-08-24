@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.templating import Jinja2Templates
 
 from event_arb.alerts import AlertDispatcher
-from event_arb.config import DataSource, Settings, get_settings
+from event_arb.config import IngestionMode, Settings, get_settings
 from event_arb.domain.enums import Venue
 from event_arb.matching.rules_diff import compare_rules
 from event_arb.observability import metrics
@@ -95,7 +95,11 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
                 runtime,
                 config,
                 alerts=AlertDispatcher(config.alerts),
-                use_websockets=config.data_source is DataSource.LIVE,
+                # Honour the explicit ingestion mode. Deriving this from "are we live?"
+                # was wrong: both venues require an authenticated WebSocket handshake
+                # even for public market data, so going live must not silently start a
+                # stream that cannot authenticate.
+                use_websockets=config.ingestion_mode is IngestionMode.WEBSOCKET,
             )
             app.state.trial = trial
             await trial.start()

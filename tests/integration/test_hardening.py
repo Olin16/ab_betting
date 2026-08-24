@@ -19,6 +19,7 @@ from pydantic import SecretStr
 from event_arb.api.app import create_app
 from event_arb.config import (
     DataSource,
+    IngestionMode,
     OpportunitySettings,
     PolymarketProduct,
     PolymarketSettings,
@@ -78,14 +79,32 @@ def test_fixture_mode_does_not_require_a_live_polymarket_product(fixture_dir: Pa
     base_settings(fixture_dir).validate_live_market_data()
 
 
-def test_polymarket_us_live_mode_fails_until_adapter_exists(fixture_dir: Path) -> None:
+def test_polymarket_us_live_mode_is_permitted_with_rest_polling(fixture_dir: Path) -> None:
+    """The public gateway needs no key, so REST polling is credential-free."""
     settings = base_settings(
         fixture_dir,
         data_source=DataSource.LIVE,
+        ingestion_mode=IngestionMode.REST_POLLING,
         polymarket=PolymarketSettings(product=PolymarketProduct.US),
     )
-    with pytest.raises(ValueError, match=r"US.*adapter is not implemented"):
+    settings.validate_live_market_data()
+
+
+def test_polymarket_us_websocket_mode_is_refused(fixture_dir: Path) -> None:
+    """The US WebSocket lives on the authenticated API, so it cannot run without keys."""
+    settings = base_settings(
+        fixture_dir,
+        data_source=DataSource.LIVE,
+        ingestion_mode=IngestionMode.WEBSOCKET,
+        polymarket=PolymarketSettings(product=PolymarketProduct.US),
+    )
+    with pytest.raises(ValueError, match="authenticated API"):
         settings.validate_live_market_data()
+
+
+def test_default_ingestion_mode_is_credential_free(fixture_dir: Path) -> None:
+    """Going live must not imply a stream that cannot authenticate."""
+    assert base_settings(fixture_dir).ingestion_mode is IngestionMode.REST_POLLING
 
 
 def test_polymarket_global_live_mode_requires_explicit_eligibility(fixture_dir: Path) -> None:

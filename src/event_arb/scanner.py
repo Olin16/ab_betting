@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from event_arb.config import DataSource, Settings
+from event_arb.config import DataSource, PolymarketProduct, Settings
 from event_arb.domain.enums import MatchStatus, Venue
 from event_arb.domain.models import MarketPair, Opportunity, OrderBook, VenueMarket
 from event_arb.matching.approval import approve_pair
@@ -62,15 +62,27 @@ def build_adapters(settings: Settings) -> dict[Venue, VenueAdapter]:
     settings.validate_live_market_data()
 
     from event_arb.venues.kalshi.client import KalshiClient
-    from event_arb.venues.polymarket.client import PolymarketClient
 
     log.warning(
         "scanner.live_market_data",
         note="read-only live market data; order submission remains impossible",
+        polymarket_product=settings.polymarket.product.value,
+        ingestion_mode=settings.ingestion_mode.value,
     )
+
+    polymarket: VenueAdapter
+    if settings.polymarket.product is PolymarketProduct.US:
+        from event_arb.venues.polymarket_us.client import PolymarketUSClient
+
+        polymarket = PolymarketUSClient(settings.polymarket)
+    else:
+        from event_arb.venues.polymarket.client import PolymarketClient
+
+        polymarket = PolymarketClient(settings.polymarket)
+
     return {
         Venue.KALSHI: KalshiClient(settings.kalshi),
-        Venue.POLYMARKET: PolymarketClient(settings.polymarket),
+        Venue.POLYMARKET: polymarket,
     }
 
 

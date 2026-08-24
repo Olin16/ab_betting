@@ -19,7 +19,13 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-from event_arb.config import DataSource, Settings, get_settings
+from event_arb.config import (
+    DataSource,
+    IngestionMode,
+    PolymarketProduct,
+    Settings,
+    get_settings,
+)
 from event_arb.domain.enums import MatchStatus, Venue
 from event_arb.observability.logging import configure_logging, get_logger
 from event_arb.scanner import Scanner
@@ -233,7 +239,13 @@ async def _cmd_trial(settings: Settings, args: argparse.Namespace) -> int:
         scanner,
         settings,
         alerts=AlertDispatcher(settings.alerts),
-        use_websockets=settings.data_source is DataSource.LIVE and not args.rest_only,
+        # WebSocket ingestion needs an authenticated handshake on both venues, so it is
+        # opt-in via ingestion mode and never implied by merely running live.
+        use_websockets=(
+            settings.data_source is DataSource.LIVE
+            and settings.ingestion_mode is IngestionMode.WEBSOCKET
+            and not args.rest_only
+        ),
     )
     await runner.start()
     print(f"\n  trial running; scanning every {settings.trial.scan_interval_seconds}s")
@@ -274,7 +286,25 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
     print(f"  max book age        : {settings.opportunity.max_book_age_ms}ms")
     print(f"  slippage buffer     : {settings.opportunity.slippage_buffer_pct}%")
     print(f"  polymarket product  : {settings.polymarket.product.value}")
+    print(f"  ingestion mode      : {settings.ingestion_mode.value}")
     print(f"  USDC haircut        : {settings.polymarket.usdc_haircut_pct}%")
+
+    print("\nMarket-data access:")
+    print("  Kalshi public REST      : available without credentials")
+    print(
+        "  Kalshi WebSocket        : requires authentication "
+        "(handshake is signed even for public channels)"
+    )
+    if settings.polymarket.product is PolymarketProduct.US:
+        print("  Polymarket US REST      : available without credentials (public gateway)")
+        print("  Polymarket US WebSocket : requires the authenticated API — unavailable here")
+    else:
+        print("  Polymarket Global       : requires eligibility confirmation")
+    credentialled = settings.ingestion_mode is IngestionMode.WEBSOCKET
+    print(
+        f"  selected ingestion      : {settings.ingestion_mode.value}"
+        f"{' (needs credentials)' if credentialled else ' (credential-free)'}"
+    )
 
     print("\nSafety:")
     print(f"  trading_enabled setting : {settings.trading_enabled}")

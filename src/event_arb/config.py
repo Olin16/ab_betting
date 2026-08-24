@@ -22,6 +22,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 __all__ = [
     "AlertSettings",
     "DataSource",
+    "IngestionMode",
     "KalshiEnvironment",
     "KalshiSettings",
     "OpportunitySettings",
@@ -43,6 +44,19 @@ class DataSource(StrEnum):
 class KalshiEnvironment(StrEnum):
     DEMO = "demo"
     PROD = "prod"
+
+
+class IngestionMode(StrEnum):
+    """How books are kept current.
+
+    ``REST_POLLING`` is the only credential-free option. Both venues serve market data
+    over unauthenticated REST, but **both require authentication for their WebSocket
+    handshake even on public market-data channels**, so streaming is not available without
+    credentials on either side.
+    """
+
+    REST_POLLING = "rest_polling"
+    WEBSOCKET = "websocket"
 
 
 class PolymarketProduct(StrEnum):
@@ -92,12 +106,24 @@ class PolymarketSettings(BaseModel):
     #: Set only after confirming eligibility under the international platform's current
     #: terms and obtaining any required API permission. US operators must leave this off.
     global_terms_eligibility_confirmed: bool = False
+
+    # --- Polymarket US (QCX LLC) ---
+    #: Public gateway. Documented as requiring no API key, which is what makes a
+    #: credential-free polling trial possible.
+    us_gateway_url: str = "https://gateway.polymarket.us"
+    #: Authenticated API, where the WebSocket lives. Not reached by the read-only client.
+    us_api_url: str = "https://api.polymarket.us"
+
+    # --- Polymarket Global only, below. None of it is valid for the US product. ---
     global_clob_base_url: str = "https://clob.polymarket.com"
     global_gamma_base_url: str = "https://gamma-api.polymarket.com"
     global_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     global_geoblock_url: str = "https://polymarket.com/api/geoblock"
     requests_per_second: float = 5.0
     #: Haircut applied to USDC-denominated proceeds to price depeg/conversion risk.
+    #: Applies to Polymarket **Global** only; the US product settles in USD, and the
+    #: opportunity engine gates this on the market's settlement asset rather than on
+    #: configuration, so a US pair receives no haircut regardless of this value.
     usdc_haircut_pct: Decimal = Decimal("0.10")
 
 
@@ -207,6 +233,10 @@ class Settings(BaseSettings):
     api_bind_is_externally_restricted: bool = False
 
     data_source: DataSource = DataSource.FIXTURE
+    #: Default REST polling: it needs no credentials on either venue. WebSocket ingestion
+    #: requires an authenticated handshake even for public market data, so it must be
+    #: selected deliberately rather than switched on by merely going live.
+    ingestion_mode: IngestionMode = IngestionMode.REST_POLLING
     fixture_dir: Path = Path("tests/fixtures")
 
     kalshi: KalshiSettings = Field(default_factory=KalshiSettings)
@@ -249,10 +279,14 @@ class Settings(BaseSettings):
         if self.data_source is not DataSource.LIVE:
             return
         if self.polymarket.product is PolymarketProduct.US:
-            raise ValueError(
-                "Polymarket US is selected, but its read-only adapter is not implemented; "
-                "live mode will not fall back to Polymarket Global"
-            )
+            # The public gateway needs no key, but the WebSocket does. Refuse rather than
+            # start a stream that cannot authenticate.
+            if self.ingestion_mode is IngestionMode.WEBSOCKET:
+                raise ValueError(
+                    "Polymarket US streaming requires the authenticated API; set "
+                    "EVENT_ARB_INGESTION_MODE=rest_polling for a credential-free trial"
+                )
+            return
         if not self.polymarket.global_terms_eligibility_confirmed:
             raise ValueError(
                 "Polymarket Global live access requires explicit confirmation of operator "

@@ -40,12 +40,17 @@ Source: <https://docs.kalshi.com/getting_started/orderbook_responses>,
 `status`, `close_time`. Exact set of `*_dollars` / `*_fp` suffixed fields is **not fully
 verified**; the mapper tolerates missing fields rather than failing hard.
 
-### A4. Auth on market data — CONFLICTING, needs verification
-The Get Market Orderbook reference lists `KALSHI-ACCESS-KEY`, `KALSHI-ACCESS-SIGNATURE`,
-`KALSHI-ACCESS-TIMESTAMP` headers, while the market-data quick start states market-data
-endpoints "require no authentication headers".
-**Resolution used:** sign requests whenever credentials are configured, and fall back to
-unauthenticated requests when they are not. Verify before relying on unauthenticated access.
+### A4. Auth on market data — RESOLVED (REST public, WebSocket authenticated)
+Kalshi serves **series, events, markets and order books over unauthenticated REST**, so a
+credential-free read-only trial is supported. The earlier "the docs disagree" reading was
+wrong: the reference page lists auth headers because they are *accepted*, not because they
+are required for market data.
+
+**This does not extend to the WebSocket.** The Kalshi WebSocket handshake is authenticated
+**even for public market-data channels**. Streaming therefore requires credentials on this
+venue, and `ingestion_mode` defaults to `rest_polling` for exactly that reason.
+
+Requests are still signed when credentials happen to be configured.
 
 ### A5. Request signing — ASSUMPTION
 RSA-PSS (SHA-256, salt length = digest length) over the string
@@ -103,7 +108,7 @@ Rounding, per the fee-rounding page:
 
 ---
 
-## Polymarket US — intended target, adapter not implemented
+## Polymarket US — implemented (public REST, read-only)
 
 Checked against official documentation on **2026-08-23**. These facts define the next
 fixture-backed adapter; they are not evidence that the current Global mapper is compatible.

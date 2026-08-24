@@ -53,8 +53,11 @@ class KalshiClient(VenueAdapter):
         self._owns_client = client is None
         self._limiter = RateLimiter(settings.requests_per_second)
 
-        # Signing is optional: the docs disagree about whether market data requires auth
-        # (see docs/api-assumptions.md A4), so sign when we can and proceed when we can't.
+        # Signing is optional for market data. Kalshi serves series, events, markets and
+        # order books over unauthenticated REST, so a credential-free read-only trial is
+        # supported (docs/api-assumptions.md A4). Requests are still signed when
+        # credentials happen to be configured. Note this does NOT extend to the
+        # WebSocket, whose handshake is authenticated even for public channels.
         if signer is not None:
             self._signer: KalshiSigner | None = signer
         elif settings.has_credentials and settings.private_key_path is not None:
