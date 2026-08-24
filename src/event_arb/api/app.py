@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from event_arb.alerts import AlertDispatcher
 from event_arb.config import IngestionMode, Settings, get_settings
 from event_arb.domain.enums import Venue
+from event_arb.matching.readiness import assess_readiness
 from event_arb.matching.rules_diff import compare_rules
 from event_arb.observability import metrics
 from event_arb.observability.logging import configure_logging, get_logger
@@ -185,13 +186,17 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         polymarket = runtime.state.markets.get((Venue.POLYMARKET, pair.polymarket_market_id))
         if kalshi is None or polymarket is None:
             raise HTTPException(status_code=404, detail="market metadata missing")
+        comparison = compare_rules(kalshi, polymarket)
         return render(
             request,
             "pair_review.html",
             pair=pair,
             kalshi=kalshi,
             polymarket=polymarket,
-            comparison=compare_rules(kalshi, polymarket),
+            comparison=comparison,
+            readiness=assess_readiness(
+                pair, kalshi, polymarket, differences=comparison.differences
+            ),
             kalshi_book=runtime.store.get(Venue.KALSHI, pair.kalshi_market_id),
             polymarket_book=runtime.store.get(Venue.POLYMARKET, pair.polymarket_market_id),
         )
@@ -273,11 +278,15 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         if pair_id not in runtime.state.pairs:
             raise HTTPException(status_code=404, detail="pair not found")
         try:
+            # No generic material-difference override: a contradictory pair cannot be
+            # acknowledged into equivalence. A reviewer may supply an authoritative
+            # settlement source obtained outside the API, per leg.
             pair = await runtime.approve_and_persist(
                 pair_id,
                 approved_by,
                 str(payload.get("reviewer_notes", "")),
-                bool(payload.get("acknowledge_material_differences", False)),
+                kalshi_source_override=str(payload.get("kalshi_settlement_source", "")),
+                polymarket_source_override=str(payload.get("polymarket_settlement_source", "")),
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

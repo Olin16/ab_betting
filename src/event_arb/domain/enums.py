@@ -96,6 +96,10 @@ class ComparisonOperator(StrEnum):
 class MatchStatus(StrEnum):
     SUGGESTED = "suggested"
     UNDER_REVIEW = "under_review"
+    #: Not approvable through the normal path, but an expert has recorded a documented
+    #: exception. Deliberately distinct from APPROVED: it never yields a confirmed
+    #: arbitrage label, so an exception cannot masquerade as settlement equivalence.
+    EXPERT_REVIEW = "expert_review"
     APPROVED = "approved"
     REJECTED = "rejected"
     SUSPENDED = "suspended"

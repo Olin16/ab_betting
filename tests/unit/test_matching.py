@@ -13,6 +13,7 @@ from event_arb.domain.enums import (
     OpportunityLabel,
     SettlementAsset,
     Venue,
+    VenueProduct,
 )
 from event_arb.domain.models import FeeConfig, MarketPair, VenueMarket
 from event_arb.matching.approval import (
@@ -35,12 +36,21 @@ from event_arb.matching.rules_diff import compare_rules, detect_revision_policy
 FEE = FeeConfig(venue=Venue.KALSHI, taker_rate=Decimal("0.07"), source="test")
 
 
+#: Long enough, with settlement language, to satisfy approval readiness. Tests that need
+#: an *unready* market override `rules` or `source` explicitly.
+READY_RULES = (
+    "This market will resolve to Yes if the stated condition is met, as published by the "
+    "official source named below. If the event is postponed the market resolves to No. "
+    "Revisions issued after the initial publication do not change settlement."
+)
+
+
 def market(
     venue: Venue,
     market_id: str,
     title: str,
-    rules: str,
-    source: str = "",
+    rules: str = READY_RULES,
+    source: str = "Official source",
     close: datetime | None = None,
 ) -> VenueMarket:
     return VenueMarket(
@@ -51,6 +61,9 @@ def market(
         settlement_source=source,
         close_time=close or datetime(2026, 8, 23, 4, 0, tzinfo=UTC),
         fee_config=FEE,
+        product=(
+            VenueProduct.POLYMARKET_GLOBAL if venue is Venue.POLYMARKET else VenueProduct.NONE
+        ),
     )
 
 
@@ -143,8 +156,8 @@ def test_pair_id_is_deterministic_and_order_sensitive() -> None:
 
 def test_generated_candidates_are_never_pre_approved() -> None:
     """Machine matching proposes; only a human disposes."""
-    k = [market(Venue.KALSHI, "K1", "CPI above 3.0% for August 2026", "rules")]
-    p = [market(Venue.POLYMARKET, "P1", "CPI above 3.0% for August 2026", "rules")]
+    k = [market(Venue.KALSHI, "K1", "CPI above 3.0% for August 2026")]
+    p = [market(Venue.POLYMARKET, "P1", "CPI above 3.0% for August 2026")]
     candidates = generate_candidates(k, p, min_score=Decimal("0"))
     assert candidates
     for pair, _score, _diff in candidates:
@@ -224,8 +237,8 @@ def test_truly_equivalent_markets_have_no_material_differences() -> None:
 
 def test_usd_vs_usdc_is_flagged_but_not_material() -> None:
     """Different settlement assets are expected here; they are priced, not disqualifying."""
-    k = market(Venue.KALSHI, "K", "T", "r", "src")
-    p = market(Venue.POLYMARKET, "P", "T", "r", "src").model_copy(
+    k = market(Venue.KALSHI, "K", "T")
+    p = market(Venue.POLYMARKET, "P", "T").model_copy(
         update={"settlement_asset": SettlementAsset.USDC}
     )
     asset_diffs = [d for d in compare_rules(k, p).differences if d.dimension == "settlement_asset"]
@@ -241,34 +254,33 @@ def _pair(**overrides: object) -> MarketPair:
 
 
 def test_approval_requires_a_named_reviewer() -> None:
-    k, p = market(Venue.KALSHI, "K", "T", "r"), market(Venue.POLYMARKET, "P", "T", "r")
+    k, p = market(Venue.KALSHI, "K", "T"), market(Venue.POLYMARKET, "P", "T")
     with pytest.raises(ApprovalError):
         approve_pair(_pair(), k, p, approved_by="  ")
 
 
-def test_material_differences_block_unacknowledged_approval() -> None:
-    """A reviewer cannot approve past a settlement-changing difference by reflex."""
-    k, p = market(Venue.KALSHI, "K", "T", "r"), market(Venue.POLYMARKET, "P", "T", "r")
-    comparison = compare_rules(
-        market(Venue.KALSHI, "K", "above 90F on 2026-08-22", "r", "NWS"),
-        market(Venue.POLYMARKET, "P", "90F or higher on 2026-08-22", "r", "NOAA"),
-    )
+def test_contradictory_differences_cannot_be_acknowledged_away() -> None:
+    """A generic acknowledgement must not convert a contradictory pair into equivalence.
+
+    There is no override on the normal path: a difference that can settle the legs to
+    opposite outcomes is not a risk being accepted, it is a false statement.
+    """
+    import inspect
+
+    k = market(Venue.KALSHI, "K", "above 90F on 2026-08-22", source="NWS")
+    p = market(Venue.POLYMARKET, "P", "90F or higher on 2026-08-22", source="NOAA")
+    comparison = compare_rules(k, p)
     pair = _pair(rule_differences=comparison.differences)
-    with pytest.raises(ApprovalError, match="material rule differences"):
+
+    with pytest.raises(ApprovalError, match="not ready for approval"):
         approve_pair(pair, k, p, approved_by="analyst@example.com")
 
-    approved = approve_pair(
-        pair,
-        k,
-        p,
-        approved_by="analyst@example.com",
-        acknowledged_material_differences=True,
-    )
-    assert approved.is_tradable_pair is True
+    # And there is no acknowledgement keyword on the normal path at all.
+    assert "acknowledged_material_differences" not in inspect.signature(approve_pair).parameters
 
 
 def test_approval_records_rules_hashes_and_label() -> None:
-    k, p = market(Venue.KALSHI, "K", "T", "rules A"), market(Venue.POLYMARKET, "P", "T", "rules B")
+    k, p = market(Venue.KALSHI, "K", "T"), market(Venue.POLYMARKET, "P", "T")
     approved = approve_pair(_pair(), k, p, approved_by="analyst")
     assert approved.kalshi_rules_hash_at_approval == k.rules_hash
     assert approved.polymarket_rules_hash_at_approval == p.rules_hash
@@ -278,12 +290,12 @@ def test_approval_records_rules_hashes_and_label() -> None:
 
 def test_rules_change_after_approval_auto_suspends_the_pair() -> None:
     """The core safety behaviour: a venue rewriting its rules invalidates the approval."""
-    k = market(Venue.KALSHI, "K", "T", "Resolves Yes above 90F.")
-    p = market(Venue.POLYMARKET, "P", "T", "Resolves Yes above 90F.")
+    k = market(Venue.KALSHI, "K", "T")
+    p = market(Venue.POLYMARKET, "P", "T")
     approved = approve_pair(_pair(), k, p, approved_by="analyst")
     assert approved.is_tradable_pair is True
 
-    edited = k.model_copy(update={"rules_text": "Resolves Yes at 90F or higher."})
+    edited = k.model_copy(update={"rules_text": READY_RULES + " Amended: threshold is now 95."})
     check = check_for_rules_change(approved, edited, p)
     assert check.changed and check.kalshi_changed and not check.polymarket_changed
 
@@ -296,26 +308,26 @@ def test_rules_change_after_approval_auto_suspends_the_pair() -> None:
 
 def test_cosmetic_whitespace_change_does_not_suspend() -> None:
     """Reformatting is not a rules change; churn here would train reviewers to ignore it."""
-    k = market(Venue.KALSHI, "K", "T", "Resolves Yes above 90F.")
-    p = market(Venue.POLYMARKET, "P", "T", "rules")
+    k = market(Venue.KALSHI, "K", "T")
+    p = market(Venue.POLYMARKET, "P", "T")
     approved = approve_pair(_pair(), k, p, approved_by="analyst")
-    reformatted = k.model_copy(update={"rules_text": "Resolves   Yes\n above 90F."})
+    reformatted = k.model_copy(update={"rules_text": READY_RULES.replace(" ", "\n  ")})
     assert check_for_rules_change(approved, reformatted, p).changed is False
 
 
 def test_unapproved_pair_is_not_checked_for_rules_change() -> None:
-    k, p = market(Venue.KALSHI, "K", "T", "r"), market(Venue.POLYMARKET, "P", "T", "r")
+    k, p = market(Venue.KALSHI, "K", "T"), market(Venue.POLYMARKET, "P", "T")
     assert check_for_rules_change(_pair(), k, p).changed is False
 
 
 def test_suspended_pair_cannot_be_tradable() -> None:
-    k, p = market(Venue.KALSHI, "K", "T", "r"), market(Venue.POLYMARKET, "P", "T", "r")
+    k, p = market(Venue.KALSHI, "K", "T"), market(Venue.POLYMARKET, "P", "T")
     approved = approve_pair(_pair(), k, p, approved_by="analyst")
     assert suspend_pair(approved, "test").is_tradable_pair is False
 
 
 def test_rejected_pair_cannot_be_approved_directly() -> None:
-    k, p = market(Venue.KALSHI, "K", "T", "r"), market(Venue.POLYMARKET, "P", "T", "r")
+    k, p = market(Venue.KALSHI, "K", "T"), market(Venue.POLYMARKET, "P", "T")
     rejected = reject_pair(_pair(), "not equivalent", "analyst")
     with pytest.raises(ApprovalError):
         approve_pair(rejected, k, p, approved_by="analyst")
@@ -420,7 +432,7 @@ def _fingerprint_market(**overrides: object) -> VenueMarket:
         "venue": Venue.KALSHI,
         "venue_market_id": "K",
         "title": "Will X happen?",
-        "rules_text": "Resolves Yes if X happens.",
+        "rules_text": READY_RULES,
         "settlement_source": "Official source",
         "close_time": datetime(2026, 9, 17, 18, 0, tzinfo=UTC),
         "fee_config": FEE,
@@ -436,7 +448,7 @@ def test_fingerprint_is_stable_for_an_unchanged_market() -> None:
 
 def test_cosmetic_whitespace_does_not_change_the_fingerprint() -> None:
     assert (
-        _fingerprint_market(rules_text="Resolves   Yes\n if X happens.").settlement_fingerprint
+        _fingerprint_market(rules_text=READY_RULES.replace(" ", "\n  ")).settlement_fingerprint
         == _fingerprint_market().settlement_fingerprint
     )
 
@@ -489,7 +501,11 @@ def test_fingerprint_is_versioned_so_a_bump_invalidates_old_approvals() -> None:
 def test_close_time_change_suspends_an_approved_pair() -> None:
     """End to end: moving the cutoff must invalidate the approval."""
     kalshi = _fingerprint_market()
-    polymarket = _fingerprint_market(venue=Venue.POLYMARKET, venue_market_id="P")
+    polymarket = _fingerprint_market(
+        venue=Venue.POLYMARKET,
+        venue_market_id="P",
+        product=VenueProduct.POLYMARKET_GLOBAL,
+    )
     approved = approve_pair(_pair(), kalshi, polymarket, approved_by="analyst")
     assert approved.is_tradable_pair is True
 

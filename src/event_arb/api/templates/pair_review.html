@@ -3,6 +3,37 @@
 {% block content %}
 <h2>Pair review <code>{{ pair.id[:16] }}</code></h2>
 
+<h2>Approval state</h2>
+<table>
+  <tr><th>Similarity score</th>
+      <td class="num">{{ pair.semantic_score }}
+        <span class="muted">— retrieval signal only; not evidence of equivalence</span></td></tr>
+  <tr><th>Rule differences</th>
+      <td>{{ comparison.differences | length }} total,
+        <span class="{% if comparison.material %}bad{% else %}good{% endif %}">
+          {{ comparison.material | length }} material</span></td></tr>
+  <tr><th>Missing information</th>
+      <td>{% if readiness.missing_information %}
+        <span class="warn">{{ readiness.missing_information | join(', ') }}</span>
+      {% else %}<span class="good">none</span>{% endif %}</td></tr>
+  <tr><th>Unapprovable reasons</th>
+      <td>{% if readiness.blockers %}
+        <ul style="margin:0;padding-left:18px">
+        {% for code, detail in readiness.blockers %}
+          <li><code class="bad">{{ code.value }}</code> — <span class="muted">{{ detail }}</span></li>
+        {% endfor %}
+        </ul>
+      {% else %}<span class="good">none</span>{% endif %}</td></tr>
+  <tr><th>Ready for human approval</th>
+      <td>{% if readiness.is_ready %}<span class="good">yes</span>
+          {% else %}<span class="bad">no</span>{% endif %}</td></tr>
+  <tr><th>Approved</th>
+      <td>{% if pair.is_tradable_pair %}<span class="good">yes — by {{ pair.approved_by }}</span>
+          {% elif pair.status.value == 'expert_review' %}
+            <span class="warn">expert review recorded (not approved; never confirmed)</span>
+          {% else %}<span class="muted">no</span>{% endif %}</td></tr>
+</table>
+
 {% if comparison.has_material %}
 <div class="panel" style="border-left:4px solid var(--bad)">
   <strong class="bad">{{ comparison.material | length }} material rule difference(s).</strong>
@@ -106,10 +137,15 @@
 <h2>Approval</h2>
 <div class="panel">
   <p class="muted">Approval is recorded with the reviewer's identity and both rules hashes.
-  If either venue edits its rules afterwards, the pair is automatically suspended.</p>
+  If either venue edits its rules afterwards, the pair is automatically suspended.
+  There is no acknowledgement override: a pair with an unapprovable reason above cannot be
+  approved through this endpoint at all.</p>
   <pre><code>curl -X POST localhost:8000/api/pairs/{{ pair.id }}/approve \
   -H 'content-type: application/json' \
   -d '{"approved_by":"you@example.com","reviewer_notes":"...",
-       "acknowledge_material_differences":{{ 'true' if comparison.has_material else 'false' }}}'</code></pre>
+       "kalshi_settlement_source":"","polymarket_settlement_source":""}'</code></pre>
+  <p class="muted">The settlement-source fields record an authoritative source you obtained
+  outside the API. Supply them <strong>per leg</strong>: two unknown sources are two
+  unknowns, not agreement.</p>
 </div>
 {% endblock %}

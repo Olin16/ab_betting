@@ -105,7 +105,7 @@ def test_approval_of_a_pair_with_material_differences_is_refused(client: TestCli
         f"/api/pairs/{pair_id}/approve", json={"approved_by": "reviewer@example.com"}
     )
     assert response.status_code == 400
-    assert "material rule differences" in response.json()["detail"]
+    assert "not ready for approval" in response.json()["detail"]
 
 
 def test_approval_succeeds_for_an_equivalent_pair(client: TestClient) -> None:
@@ -119,3 +119,29 @@ def test_approval_succeeds_for_an_equivalent_pair(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert response.json()["manually_approved"] is True
+
+
+def test_pair_review_distinguishes_the_approval_states(client: TestClient) -> None:
+    """Similarity, differences, missing info, blockers, readiness and approval are
+    six distinct facts and must not be collapsed into one."""
+    app_scanner: Scanner = client.app.state.scanner  # type: ignore[attr-defined]
+    pair_id = next(iter(app_scanner.state.pairs))
+    body = client.get(f"/pairs/{pair_id}").text
+
+    for heading in (
+        "Similarity score",
+        "Rule differences",
+        "Missing information",
+        "Unapprovable reasons",
+        "Ready for human approval",
+        "Approved",
+    ):
+        assert heading in body, f"pair review does not show {heading!r}"
+
+
+def test_pair_review_states_there_is_no_acknowledgement_override(
+    client: TestClient,
+) -> None:
+    body = client.get(f"/pairs/{next(iter(client.app.state.scanner.state.pairs))}").text  # type: ignore[attr-defined]
+    assert "no acknowledgement override" in body
+    assert "acknowledge_material_differences" not in body

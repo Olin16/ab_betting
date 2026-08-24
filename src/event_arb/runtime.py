@@ -109,6 +109,10 @@ class TrialRunner:
                 note="nothing to ingest; configure trial.watched_pairs or approve a pair",
             )
 
+        warning = self._settings.validate_freshness_budget()
+        if warning:
+            log.warning("trial.freshness_budget", detail=warning)
+
         await self._synchronizer.prime(subscriptions)
 
         if self._use_websockets:
@@ -118,8 +122,7 @@ class TrialRunner:
         self._scanner.streaming = True
 
         self._tasks = [
-            asyncio.create_task(self._refresh_loop(), name="trial-refresh"),
-            asyncio.create_task(self._scan_loop(), name="trial-scan"),
+            asyncio.create_task(self._cycle_loop(), name="trial-cycle"),
             asyncio.create_task(self._maintenance_loop(), name="trial-maintenance"),
         ]
         log.info(
@@ -151,14 +154,24 @@ class TrialRunner:
 
     # ---------------------------------------------------------------------- loops
 
-    async def _refresh_loop(self) -> None:
-        """Keep books current via REST.
+    async def _cycle_loop(self) -> None:
+        """Refresh, persist, then scan — in that order, in one cycle.
 
-        Runs even when WebSockets are connected: it is the backstop that repairs a book
-        after a gap, a malformed update, or a silent divergence on a feed that carries no
-        sequence numbers.
+        Refresh and scan used to be independent tasks on independent timers, which meant
+        a scan could land on the previous cycle's snapshot while the next REST request was
+        still in flight. With a 5 s refresh interval and a 2 s freshness bound, that book
+        was already stale, so the scan either rejected everything or (worse, had the bound
+        been loosened) priced an old book as current.
+
+        Sequencing them removes the race outright rather than papering over it by widening
+        the staleness threshold, which would trade a visible failure for an invisible one.
+        The REST refresh remains the backstop that repairs a book after a gap, a malformed
+        update, or silent divergence on a feed with no sequence numbers.
         """
-        interval = self._settings.trial.refresh_interval_seconds
+        interval = max(
+            self._settings.trial.refresh_interval_seconds,
+            self._settings.trial.scan_interval_seconds,
+        )
         while await self._sleep(interval):
             try:
                 books = await self._scanner.refresh_books()
@@ -168,10 +181,10 @@ class TrialRunner:
                 raise
             except Exception as exc:
                 self._record_error("refresh", exc)
+                # A failed refresh means the books are unverified. Scanning them would
+                # report on state we could not confirm, so skip to the next cycle.
+                continue
 
-    async def _scan_loop(self) -> None:
-        interval = self._settings.trial.scan_interval_seconds
-        while await self._sleep(interval):
             try:
                 await self._scan_once()
             except asyncio.CancelledError:

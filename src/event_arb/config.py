@@ -182,9 +182,27 @@ class TrialSettings(BaseModel):
     #: by the Kalshi Developer Agreement §3.1; see docs/compliance.md.
     snapshot_retention_hours: int = 72
 
+    #: Allowance for request latency and clock tolerance when checking that the freshness
+    #: bound can actually be met by a polling cycle.
+    expected_request_latency_seconds: float = 2.0
+
     @property
     def is_configured(self) -> bool:
         return bool(self.watched_pairs)
+
+    @property
+    def cycle_interval_seconds(self) -> float:
+        """One refresh-then-scan cycle takes the longer of the two intervals."""
+        return max(self.refresh_interval_seconds, self.scan_interval_seconds)
+
+    def required_book_age_ms(self) -> int:
+        """Smallest freshness bound a polling cycle can actually satisfy.
+
+        A book is at worst one full cycle old plus the time the refresh request itself
+        took. A bound below this rejects every book; a bound far above it silently accepts
+        genuinely stale data. Both are reported rather than assumed.
+        """
+        return int((self.cycle_interval_seconds + self.expected_request_latency_seconds) * 1000)
 
 
 class PaperSettings(BaseModel):
@@ -273,6 +291,25 @@ class Settings(BaseSettings):
                 "the dashboard exposes a state-changing approval endpoint. Bind to "
                 "127.0.0.1, or set a token and put an authenticating proxy in front."
             )
+
+    def validate_freshness_budget(self) -> str | None:
+        """Return a warning when the freshness bound cannot be met by the poll cycle.
+
+        Returns ``None`` when the configuration is coherent. Deliberately a warning rather
+        than a hard failure: fixture runs legitimately use a tiny cycle, and the operator
+        may be running a faster feed than the defaults assume.
+        """
+        required = self.trial.required_book_age_ms()
+        if self.opportunity.max_book_age_ms >= required:
+            return None
+        return (
+            f"max_book_age_ms={self.opportunity.max_book_age_ms} is below the "
+            f"{required}ms a {self.trial.cycle_interval_seconds}s poll cycle needs "
+            f"(plus {self.trial.expected_request_latency_seconds}s request latency). "
+            "Books will be judged stale before the next refresh lands. Either shorten "
+            "the cycle or raise the bound, accepting that a higher bound means acting on "
+            "older prices."
+        )
 
     def validate_live_market_data(self) -> None:
         """Fail closed when the selected Polymarket product is not safely supported."""

@@ -184,7 +184,7 @@ async def test_misleadingly_similar_pair_is_flagged_and_cannot_be_approved(
     assert "comparison_operator" in dimensions
     assert "settlement_source" in dimensions
 
-    with pytest.raises(ApprovalError, match="material rule differences"):
+    with pytest.raises(ApprovalError, match="not ready for approval"):
         scanner.approve(pair_id, approved_by="test@example.com")
 
 

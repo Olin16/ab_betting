@@ -244,7 +244,7 @@ async def test_materially_different_us_pair_stays_a_research_candidate(
     dimensions = {d.dimension for d in pair.rule_differences if d.is_material}
     assert "comparison_operator" in dimensions
 
-    with pytest.raises(ApprovalError, match="material rule differences"):
+    with pytest.raises(ApprovalError, match="not ready for approval"):
         scanner.approve(pair_id, approved_by="test@example.com")
 
     result = scanner.scan()

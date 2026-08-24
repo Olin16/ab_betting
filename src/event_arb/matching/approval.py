@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from event_arb.domain.enums import MatchStatus
 from event_arb.domain.models import MarketPair, VenueMarket
+from event_arb.matching.readiness import assess_readiness
 from event_arb.observability.logging import get_logger
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "approve_pair",
     "check_for_rules_change",
     "enforce_rules_integrity",
+    "record_expert_review",
     "reject_pair",
     "suspend_pair",
 ]
@@ -53,27 +55,41 @@ def approve_pair(
     polymarket_market: VenueMarket,
     approved_by: str,
     reviewer_notes: str = "",
-    acknowledged_material_differences: bool = False,
+    kalshi_source_override: str = "",
+    polymarket_source_override: str = "",
+    settlement_deadline_required: bool = False,
 ) -> MarketPair:
     """Approve a pair as settlement-equivalent.
 
-    Raises :class:`ApprovalError` when material rule differences exist and the reviewer
-    has not explicitly acknowledged them. This is the guardrail against approving a pair
-    by reflex: the system will not let a reviewer skip past a difference that can change
-    which side settles in the money.
+    Raises :class:`ApprovalError` unless the pair is *ready*: we hold authoritative rules
+    and a named settlement source for both legs, product and outcome identity resolve,
+    close times are known, and no detected difference can settle the legs to opposite
+    outcomes.
+
+    There is deliberately **no generic acknowledgement override**. A reviewer ticking a box
+    cannot make a contradictory pair equivalent — that is not a risk being accepted, it is
+    a false statement. Genuine exceptions go through :func:`record_expert_review`, which is
+    separately named, separately audited, and never produces a confirmed arbitrage label.
+
+    ``*_source_override`` records an authoritative source obtained outside the API, per
+    leg. Two unknown sources are two unknowns, not agreement.
     """
     if not approved_by.strip():
         raise ApprovalError("approval requires an identified reviewer")
     if pair.status is MatchStatus.REJECTED:
         raise ApprovalError("a rejected pair must be re-opened for review before approval")
 
-    material = [d for d in pair.rule_differences if d.is_material]
-    if material and not acknowledged_material_differences:
-        dimensions = ", ".join(sorted({d.dimension for d in material}))
-        raise ApprovalError(
-            f"pair has material rule differences ({dimensions}); the reviewer must "
-            "explicitly acknowledge them before approval"
-        )
+    readiness = assess_readiness(
+        pair,
+        kalshi_market,
+        polymarket_market,
+        kalshi_source_override=kalshi_source_override,
+        polymarket_source_override=polymarket_source_override,
+        settlement_deadline_required=settlement_deadline_required,
+    )
+    if not readiness.is_ready:
+        detail = "; ".join(f"{code.value}: {reason}" for code, reason in readiness.blockers)
+        raise ApprovalError(f"pair is not ready for approval — {detail}")
 
     approved = pair.model_copy(
         update={
@@ -86,13 +102,47 @@ def approve_pair(
             "polymarket_rules_hash_at_approval": polymarket_market.rules_hash,
         }
     )
-    log.info(
-        "pair.approved",
-        pair_id=pair.id,
-        approved_by=approved_by,
-        material_differences=len(material),
-    )
+    log.info("pair.approved", pair_id=pair.id, approved_by=approved_by)
     return approved
+
+
+def record_expert_review(
+    pair: MarketPair,
+    kalshi_market: VenueMarket,
+    polymarket_market: VenueMarket,
+    reviewed_by: str,
+    justification: str,
+) -> MarketPair:
+    """Record a documented exception for a pair that is not normally approvable.
+
+    This is **not** approval. The pair moves to ``EXPERT_REVIEW`` and
+    ``manually_approved`` stays false, so :attr:`MarketPair.is_tradable_pair` remains
+    false and no opportunity on it can ever be labeled confirmed. It exists so an expert
+    judgement can be recorded and audited rather than smuggled in as an approval.
+    """
+    if not reviewed_by.strip():
+        raise ApprovalError("expert review requires an identified reviewer")
+    if len(justification.strip()) < 40:
+        raise ApprovalError(
+            "expert review requires a substantive written justification (at least 40 characters)"
+        )
+
+    readiness = assess_readiness(pair, kalshi_market, polymarket_market)
+    log.warning(
+        "pair.expert_review_recorded",
+        pair_id=pair.id,
+        reviewed_by=reviewed_by,
+        blockers=list(readiness.blocker_codes),
+    )
+    return pair.model_copy(
+        update={
+            "status": MatchStatus.EXPERT_REVIEW,
+            "manually_approved": False,
+            "reviewer_notes": (
+                f"{pair.reviewer_notes}\n[expert review by {reviewed_by}] {justification}"
+            ).strip(),
+        }
+    )
 
 
 def reject_pair(pair: MarketPair, reviewer_notes: str, rejected_by: str) -> MarketPair:

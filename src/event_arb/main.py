@@ -27,6 +27,7 @@ from event_arb.config import (
     get_settings,
 )
 from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.matching.approval import ApprovalError
 from event_arb.observability.logging import configure_logging, get_logger
 from event_arb.scanner import Scanner
 
@@ -60,13 +61,20 @@ async def _prepare(settings: Settings, auto_approve: bool) -> Scanner:
         # Demo convenience only: approves every candidate whose automated rule comparison
         # found no material differences. Real approval is a human reading both rule sets.
         for pair_id, pair in list(scanner.state.pairs.items()):
-            if pair.has_material_differences or pair.status is not MatchStatus.SUGGESTED:
+            if pair.status is not MatchStatus.SUGGESTED:
                 continue
-            scanner.approve(
-                pair_id,
-                approved_by="cli-demo (--auto-approve)",
-                reviewer_notes="Auto-approved for demonstration: no material differences found.",
-            )
+            try:
+                scanner.approve(
+                    pair_id,
+                    approved_by="cli-demo (--auto-approve)",
+                    reviewer_notes=(
+                        "Auto-approved for demonstration only; readiness checks passed."
+                    ),
+                )
+            except ApprovalError:
+                # Not ready. The demo must not manufacture an approval it could not
+                # justify; the pair stays a research candidate.
+                continue
     return scanner
 
 
@@ -288,6 +296,12 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
     print(f"  polymarket product  : {settings.polymarket.product.value}")
     print(f"  ingestion mode      : {settings.ingestion_mode.value}")
     print(f"  USDC haircut        : {settings.polymarket.usdc_haircut_pct}%")
+
+    budget = settings.validate_freshness_budget()
+    print(f"  poll cycle          : {settings.trial.cycle_interval_seconds}s")
+    print(f"  freshness budget    : {'OK' if budget is None else 'TOO TIGHT'}")
+    if budget:
+        print(f"    {budget}")
 
     print("\nMarket-data access:")
     print("  Kalshi public REST      : available without credentials")

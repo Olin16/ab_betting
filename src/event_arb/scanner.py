@@ -326,9 +326,14 @@ class Scanner:
         pair_id: str,
         approved_by: str,
         reviewer_notes: str = "",
-        acknowledge_material_differences: bool = False,
+        kalshi_source_override: str = "",
+        polymarket_source_override: str = "",
     ) -> MarketPair:
         """Approve a pair. This is the only route to a 'confirmed' opportunity.
+
+        Refuses unless the pair is ready: authoritative rules and a named settlement
+        source for both legs, resolved product and outcome identity, known close times,
+        and no difference that could settle the legs to opposite outcomes.
 
         Synchronous so that approval logic stays testable without a database. Use
         :meth:`approve_and_persist` when durability is required.
@@ -342,7 +347,8 @@ class Scanner:
             polymarket,
             approved_by,
             reviewer_notes,
-            acknowledged_material_differences=acknowledge_material_differences,
+            kalshi_source_override=kalshi_source_override,
+            polymarket_source_override=polymarket_source_override,
         )
         self.state.pairs[pair_id] = approved
         return approved
@@ -352,11 +358,16 @@ class Scanner:
         pair_id: str,
         approved_by: str,
         reviewer_notes: str = "",
-        acknowledge_material_differences: bool = False,
+        kalshi_source_override: str = "",
+        polymarket_source_override: str = "",
     ) -> MarketPair:
         """Approve a pair and durably record the approval and its rule hashes."""
         approved = self.approve(
-            pair_id, approved_by, reviewer_notes, acknowledge_material_differences
+            pair_id,
+            approved_by,
+            reviewer_notes,
+            kalshi_source_override=kalshi_source_override,
+            polymarket_source_override=polymarket_source_override,
         )
         await self.persist_pairs()
         await self.audit(
@@ -368,7 +379,8 @@ class Scanner:
                 "polymarket_market_id": approved.polymarket_market_id,
                 "kalshi_rules_hash": approved.kalshi_rules_hash_at_approval,
                 "polymarket_rules_hash": approved.polymarket_rules_hash_at_approval,
-                "acknowledged_material_differences": acknowledge_material_differences,
+                "kalshi_source_override": kalshi_source_override or None,
+                "polymarket_source_override": polymarket_source_override or None,
                 "reviewer_notes": reviewer_notes,
             },
         )
