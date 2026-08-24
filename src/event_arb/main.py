@@ -27,6 +27,7 @@ from event_arb.config import (
     get_settings,
 )
 from event_arb.domain.enums import MatchStatus, Venue
+from event_arb.domain.models import VenueMarket
 from event_arb.matching.approval import ApprovalError
 from event_arb.observability.logging import configure_logging, get_logger
 from event_arb.scanner import Scanner
@@ -279,6 +280,95 @@ async def _cmd_trial(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
+    """Bounded candidate research. Never approves, never trades, never reads a book."""
+    _banner(settings)
+
+    from event_arb.candidates import (
+        DiscoveryLimits,
+        build_request_plan,
+        research_candidates,
+        top_slugs_for_verification,
+    )
+
+    limits = DiscoveryLimits(
+        kalshi_limit=args.kalshi_limit,
+        polymarket_limit=args.polymarket_limit,
+        min_score=Decimal(str(args.min_score)),
+        max_per_market=args.max_per_market,
+        max_results=args.max_results,
+        verify_top=args.verify_top,
+    )
+
+    live = settings.data_source is DataSource.LIVE
+    plan = build_request_plan(
+        limits,
+        settings.kalshi.rest_base_url,
+        settings.polymarket.us_gateway_url,
+    )
+
+    print()
+    print(plan.render())
+    print()
+
+    if live:
+        settings.validate_live_market_data()
+        print("  MODE: LIVE — the requests above will be sent to the venues.")
+        if not args.yes_i_authorize_live_requests:
+            # Offloaded so the blocking prompt never stalls the event loop.
+            answer = await asyncio.to_thread(
+                input, "  Proceed with live requests? Type 'yes' to continue: "
+            )
+            if answer.strip().lower() != "yes":
+                print("  Aborted. No request was made.")
+                return 1
+    else:
+        print("  MODE: FIXTURE — no network request will be made.")
+
+    scanner = Scanner(settings)
+    kalshi_markets = await _discover_limited(scanner, Venue.KALSHI, limits.kalshi_limit)
+    polymarket_markets = await _discover_limited(scanner, Venue.POLYMARKET, limits.polymarket_limit)
+
+    report = research_candidates(
+        kalshi_markets, polymarket_markets, limits, existing_pairs=scanner.state.pairs
+    )
+
+    print("\n--- Research summary ---")
+    for key, value in report.as_dict().items():
+        print(f"  {key}: {value}")
+
+    print(f"\n--- Shortlist ({len(report.records)}) ---")
+    for record in sorted(report.records, key=lambda r: r.score, reverse=True):
+        state = "READY" if record.readiness.is_ready else "BLOCKED"
+        print(f"\n  [{state}] score={record.score}  pair={record.pair.id[:12]}")
+        print(f"    Kalshi     : {record.kalshi_title[:70]}")
+        print(f"    Polymarket : {record.polymarket_title[:70]}")
+        if record.comparison.material:
+            dims = ", ".join(sorted({d.dimension for d in record.comparison.material}))
+            print(f"    material   : {dims}")
+        for code in record.readiness.blocker_codes:
+            print(f"    blocker    : {code}")
+
+    if args.verify_top and report.records:
+        slugs = top_slugs_for_verification(report, limits)
+        print(f"\n  Targeted re-verification would fetch {len(slugs)} market(s).")
+        print("  Not performed automatically; re-run with the venue selected to confirm.")
+
+    print("\n  NOTE: every entry above is a research candidate, never arbitrage.")
+    print("  Nothing was approved, no order book was read, and no trade was simulated.")
+    await scanner.close()
+    return 0
+
+
+async def _discover_limited(scanner: Scanner, venue: Venue, limit: int) -> list[VenueMarket]:
+    """One bounded page from one venue. Pagination is never followed silently."""
+    adapter = scanner.adapters.get(venue)
+    if adapter is None:
+        return []
+    markets = await adapter.discover_markets(limit=limit)
+    return markets[:limit]
+
+
 async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
     _banner(settings)
     print("\nConfiguration:")
@@ -377,6 +467,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="poll REST only; do not open WebSocket connections",
     )
+    candidates = subparsers.add_parser(
+        "candidates", help="bounded candidate research (never approves or trades)"
+    )
+    candidate_actions = candidates.add_subparsers(dest="candidates_command", required=True)
+    discover = candidate_actions.add_parser(
+        "discover", help="generate a capped shortlist of cross-venue candidates"
+    )
+    discover.add_argument("--kalshi-limit", type=int, default=250)
+    discover.add_argument("--polymarket-limit", type=int, default=250)
+    discover.add_argument("--min-score", default="0.55")
+    discover.add_argument("--max-per-market", type=int, default=3)
+    discover.add_argument("--max-results", type=int, default=100)
+    discover.add_argument("--verify-top", type=int, default=25)
+    discover.add_argument(
+        "--yes-i-authorize-live-requests",
+        action="store_true",
+        help=(
+            "skip the interactive confirmation for live requests. Named explicitly so it "
+            "cannot be typed by accident or copied without noticing."
+        ),
+    )
+
     serve = subparsers.add_parser("serve", help="run the dashboard")
 
     for sub in (scan, paper):
@@ -425,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         "pairs": _cmd_pairs,
         "doctor": _cmd_doctor,
         "trial": _cmd_trial,
+        "candidates": _cmd_candidates,
     }
     return asyncio.run(handlers[args.command](settings, args))
 
