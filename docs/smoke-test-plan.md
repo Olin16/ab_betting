@@ -22,6 +22,22 @@ pair at the documented threshold.**
 > This is a scope/result failure, not evidence that either venue's book schema passed or
 > failed. Do not widen the catalogue, follow the Kalshi cursor, lower the threshold, or
 > substitute hand-entered market ids without a new explicit decision.
+>
+> **Diagnosed offline, no request made — see `docs/zero-candidate-diagnosis.md`.** The
+> binding constraint was local scoring, not the request scope: date agreement carries a
+> quarter of the candidate score and was inert on live titles, because `extract_dates`
+> requires an explicit year and venue titles seldom state one. Same-question pairs scored
+> 0.47–0.53 against the 0.55 gate, this project's own canonical Fed pair among them at
+> 0.5316. The threshold had been asserted as a value but never exercised as behaviour —
+> the fixture path runs at 0.4 — so the live run was its first execution.
+>
+> Commit `d0e79e9` lets the venue's own close time carry that signal when no title states a
+> year, with regression tests at the production threshold. **Local scoring only: §1, §2 and
+> §3 below are untouched, and no request was sent.** Because the scorer has changed since
+> the 2026-08-24 approval, any re-run needs fresh authorization even where the request plan
+> is byte-identical. The options are compared in §6 of the diagnosis; the recommendation is
+> to re-run §1 unchanged on the corrected scorer, which costs nothing beyond the already
+> approved 31-request budget.
 
 > ## Preflight blocker history — recorded 2026-08-24, resolved 2026-08-26
 >
