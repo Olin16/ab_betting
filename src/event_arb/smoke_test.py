@@ -237,10 +237,14 @@ def _validate_preflight(settings: Settings, database_path: Path) -> None:
     resolved = database_path.resolve()
     if resolved == _DEFAULT_DATABASE:
         raise SmokeTestError("refusing to use data/event_arb.db for the smoke test")
-    temporary_root = Path(tempfile.gettempdir()).resolve()
-    if not resolved.is_relative_to(temporary_root):
+    temporary_roots = {
+        Path(tempfile.gettempdir()).resolve(),
+        Path("/tmp").resolve(),  # noqa: S108 - canonical shared temporary root on POSIX
+    }
+    if not any(resolved.is_relative_to(root) for root in temporary_roots):
         raise SmokeTestError(
-            f"smoke-test database must be under the temporary directory {temporary_root}"
+            "smoke-test database must be under a temporary directory: "
+            + ", ".join(str(root) for root in sorted(temporary_roots))
         )
     if database_path.exists():
         raise SmokeTestError(f"dedicated smoke-test database already exists: {database_path}")
