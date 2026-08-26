@@ -28,6 +28,14 @@ RULES = (
     "Revisions issued after the initial publication do not change settlement."
 )
 CLOSE = datetime(2026, 9, 17, 18, tzinfo=UTC)
+KALSHI_FEES = FeeConfig(
+    venue=Venue.KALSHI, taker_rate=Decimal("0.07"), fee_policy=FeePolicy.KALSHI_CENTICENT_CEIL
+)
+US_FEES = FeeConfig(
+    venue=Venue.POLYMARKET,
+    taker_rate=Decimal("0.06"),
+    fee_policy=FeePolicy.POLYMARKET_US_BANKERS_CENT,
+)
 
 
 def kalshi_market(index: int) -> VenueMarket:
@@ -305,6 +313,73 @@ def test_retained_record_excludes_raw_response_bodies() -> None:
     payload = report.records[0].as_dict()
     assert "raw_metadata" not in payload
     assert "payload" not in payload
+
+
+def test_live_shaped_titles_retrieve_at_the_production_threshold() -> None:
+    """The bound this suite previously asserted as a number, exercised as behaviour.
+
+    ``test_scope_matches_the_documented_initial_test_bounds`` pins ``min_score`` at 0.55,
+    but every other test here passes ``Decimal("0")``, and the fixture end-to-end path runs
+    at 0.4 — so nothing checked that 0.55 *retrieves anything* from markets shaped like the
+    ones the venues actually return. The 2026-08-26 smoke test found that out live: two
+    250-market catalogues, 62,500 comparisons, zero candidates, and it stopped needing two.
+
+    These titles are deliberately venue-native — no explicit year, different phrasing per
+    venue — which is what made prose date extraction come up empty on the real run.
+    """
+    close = datetime(2026, 9, 17, 18, tzinfo=UTC)
+    kalshi = [
+        VenueMarket(
+            venue=Venue.KALSHI,
+            venue_market_id="KXFEDDECISION-26SEP",
+            title="Fed decision in September?",
+            rules_text=RULES,
+            settlement_source="FOMC statement",
+            close_time=close,
+            fee_config=KALSHI_FEES,
+        ),
+        VenueMarket(
+            venue=Venue.KALSHI,
+            venue_market_id="KXHIGHNY-26AUG22",
+            title="NYC high temp on Aug 22?",
+            rules_text=RULES,
+            settlement_source="NWS observation",
+            close_time=datetime(2026, 8, 23, 4, tzinfo=UTC),
+            fee_config=KALSHI_FEES,
+        ),
+    ]
+    polymarket = [
+        VenueMarket(
+            venue=Venue.POLYMARKET,
+            venue_market_id="fed-cuts-september",
+            title="Fed cuts rates in September?",
+            rules_text=RULES,
+            settlement_source="FOMC statement",
+            close_time=close,
+            product=VenueProduct.POLYMARKET_US,
+            fee_config=US_FEES,
+        ),
+        VenueMarket(
+            venue=Venue.POLYMARKET,
+            venue_market_id="nyc-high-temp-august-22",
+            title="Highest temperature in NYC on August 22?",
+            rules_text=RULES,
+            settlement_source="NWS observation",
+            close_time=datetime(2026, 8, 23, 4, tzinfo=UTC),
+            product=VenueProduct.POLYMARKET_US,
+            fee_config=US_FEES,
+        ),
+    ]
+
+    report = research_candidates(kalshi, polymarket, LIMITS)
+
+    assert report.candidates_retained >= 2, (
+        "the bounded smoke test needs two distinct plausible pairs; retrieval at "
+        f"{LIMITS.min_score} produced {report.candidates_retained}"
+    )
+    matched = {(r.pair.kalshi_market_id, r.pair.polymarket_market_id) for r in report.records}
+    assert ("KXFEDDECISION-26SEP", "fed-cuts-september") in matched
+    assert ("KXHIGHNY-26AUG22", "nyc-high-temp-august-22") in matched
 
 
 def test_scope_matches_the_documented_initial_test_bounds() -> None:

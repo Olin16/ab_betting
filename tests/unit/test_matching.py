@@ -149,6 +149,90 @@ def test_different_dates_are_heavily_penalized() -> None:
     assert score.score < Decimal("0.4")
 
 
+#: The production retrieval threshold (`DiscoveryLimits.min_score`). Restated here because
+#: these tests exist to keep scoring calibrated *against it*, not against a laxer default.
+PRODUCTION_MIN_SCORE = Decimal("0.55")
+
+
+def test_close_time_carries_the_date_signal_when_no_title_states_a_year() -> None:
+    """A live-shaped pair must clear the production threshold, not sit just under it.
+
+    ``extract_dates`` requires an explicit year, and venue titles seldom carry one, so
+    prose extraction returns nothing for most real pairs. Before the close time was
+    consulted, the date signal — a quarter of the score — was neutral-imputed for those
+    pairs, and same-question titles landed in the 0.47 to 0.53 band: below 0.55, and
+    invisible to the bounded catalogue run that has to find two of them.
+    """
+    close = datetime(2026, 9, 17, 18, tzinfo=UTC)
+    k = NormalizedMarket.from_market("K", "Fed decision in September?", close_time=close)
+    p = NormalizedMarket.from_market("P", "Fed cuts rates in September?", close_time=close)
+
+    score = score_pair(k, p)
+
+    assert not k.dates and not p.dates, "neither title states a year; that is the point"
+    assert score.dates_agree is True
+    assert score.score >= PRODUCTION_MIN_SCORE
+
+
+def test_differing_close_times_never_penalize_a_pair() -> None:
+    """Close times corroborate. They are not evidence *against* a pair.
+
+    Two venues legitimately close the same question at different times, so a mismatch must
+    leave the pair exactly where the neutral imputation left it — never at the hard
+    contradiction penalty, which is reserved for a stated date conflict.
+    """
+    k_close = datetime(2026, 9, 17, 18, tzinfo=UTC)
+    p_close = datetime(2026, 9, 20, 3, tzinfo=UTC)
+    k = NormalizedMarket.from_market("K", "Fed decision in September?", close_time=k_close)
+    p = NormalizedMarket.from_market("P", "Fed cuts rates in September?", close_time=p_close)
+    without_close = score_pair(
+        NormalizedMarket.from_market("K", "Fed decision in September?"),
+        NormalizedMarket.from_market("P", "Fed cuts rates in September?"),
+    )
+
+    score = score_pair(k, p)
+
+    assert score.dates_agree is None
+    assert score.score == without_close.score
+
+
+def test_a_stated_date_conflict_still_disqualifies_despite_matching_close_times() -> None:
+    """The hard penalty answers to the titles, not to the calendar entry."""
+    close = datetime(2026, 8, 30, tzinfo=UTC)
+    k = NormalizedMarket.from_market(
+        "K", "Will NYC high be above 90F on 2026-08-22?", close_time=close
+    )
+    p = NormalizedMarket.from_market(
+        "P", "Will NYC high be above 90F on 2026-08-29?", close_time=close
+    )
+
+    score = score_pair(k, p)
+
+    assert score.dates_agree is False
+    assert score.score < Decimal("0.4")
+
+
+def test_a_shared_close_time_alone_cannot_manufacture_a_candidate() -> None:
+    """Unrelated contracts routinely share a close. Surface wording still has to agree."""
+    close = datetime(2026, 11, 6, 16, tzinfo=UTC)
+    k = NormalizedMarket.from_market("K", "Who will win the 2026 World Series?", close_time=close)
+    p = NormalizedMarket.from_market("P", "Fed cuts rates in September?", close_time=close)
+
+    assert score_pair(k, p).score < PRODUCTION_MIN_SCORE
+
+
+def test_a_naive_close_time_is_read_as_utc_rather_than_crashing_the_scan() -> None:
+    """Both venues report UTC. A mapper that dropped the offset must degrade, not raise."""
+    k = NormalizedMarket.from_market(
+        "K", "Fed decision in September?", close_time=datetime(2026, 9, 17, 18)
+    )
+    p = NormalizedMarket.from_market(
+        "P", "Fed cuts rates in September?", close_time=datetime(2026, 9, 17, 18, tzinfo=UTC)
+    )
+
+    assert score_pair(k, p).dates_agree is True
+
+
 def test_pair_id_is_deterministic_and_order_sensitive() -> None:
     glob, us = VenueProduct.POLYMARKET_GLOBAL, VenueProduct.POLYMARKET_US
     assert pair_id_for("K", "P", glob) == pair_id_for("K", "P", glob)

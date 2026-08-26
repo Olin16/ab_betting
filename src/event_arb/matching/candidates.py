@@ -9,7 +9,9 @@ Scoring blends four signals, weighted so that structural agreement dominates sur
 wording:
 
 - **token overlap** (Jaccard) and **fuzzy title ratio** — surface similarity;
-- **date agreement** — two contracts on different dates are different contracts;
+- **date agreement** — two contracts on different dates are different contracts. Dates
+  come from the titles and rules when they carry an explicit year, and otherwise from the
+  structured close time both venues publish, which is the usual case on live catalogues;
 - **threshold agreement** — the numeric heart of the question.
 
 Date or threshold *disagreement* applies a hard penalty rather than a small deduction,
@@ -19,6 +21,7 @@ because those are the cases where surface similarity is most misleading.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from rapidfuzz import fuzz
@@ -74,6 +77,24 @@ class CandidateScore:
     notes: tuple[str, ...] = ()
 
 
+def _closes_on_the_same_day(left: datetime | None, right: datetime | None) -> bool:
+    """Whether two venue close times land on the same UTC calendar day.
+
+    Compared in UTC because the two venues report in it; a naive timestamp is assumed UTC
+    rather than rejected, so a mapper that drops the offset degrades to the old neutral
+    behaviour instead of raising mid-scan.
+    """
+    if left is None or right is None:
+        return False
+    return _as_utc(left).date() == _as_utc(right).date()
+
+
+def _as_utc(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
+
+
 def _jaccard(left: frozenset[str], right: frozenset[str]) -> Decimal:
     if not left or not right:
         return Decimal("0")
@@ -104,9 +125,25 @@ def score_pair(
     # --- dates ---
     dates_agree: bool | None
     if not kalshi_features.dates or not polymarket_features.dates:
-        dates_agree = None
-        date_component = Decimal("0.5")
-        notes.append("no date extracted from at least one market")
+        # Prose extraction found nothing, which on live catalogues is the normal case:
+        # ``extract_dates`` deliberately requires an explicit year, and venue titles
+        # ("Fed decision in September?") rarely carry one. Falling straight through to the
+        # neutral 0.5 discards a quarter of the score for almost every real pair and leaves
+        # retrieval resting on surface wording alone.
+        #
+        # Both venues do publish a structured close, so use it: identical close *days* are
+        # corroboration that two contracts settle the same event. Disagreement is not the
+        # converse and must not be read as one — venues legitimately close the same
+        # question at different times — so it falls back to neutral rather than
+        # contradicting. Only a prose date conflict is ever disqualifying.
+        if _closes_on_the_same_day(kalshi_features.close_time, polymarket_features.close_time):
+            dates_agree = True
+            date_component = Decimal("1")
+            notes.append("no date in either title; venue close times fall on the same day")
+        else:
+            dates_agree = None
+            date_component = Decimal("0.5")
+            notes.append("no date extracted from at least one market")
     elif kalshi_features.dates & polymarket_features.dates:
         dates_agree = True
         date_component = Decimal("1")
@@ -167,13 +204,13 @@ def generate_candidates(
     """
     k_features = {
         market.venue_market_id: NormalizedMarket.from_market(
-            market.venue_market_id, market.title, market.rules_text
+            market.venue_market_id, market.title, market.rules_text, market.close_time
         )
         for market in kalshi_markets
     }
     p_features = {
         market.venue_market_id: NormalizedMarket.from_market(
-            market.venue_market_id, market.title, market.rules_text
+            market.venue_market_id, market.title, market.rules_text, market.close_time
         )
         for market in polymarket_markets
     }

@@ -371,7 +371,7 @@ def _print_rule_comparisons(
         print(f"\nPair {index}: {record.pair.id}  score={record.score} style={_style(record)}")
         for label, market in (("Kalshi", kalshi), ("Polymarket US", polymarket)):
             normalized = NormalizedMarket.from_market(
-                market.venue_market_id, market.title, market.rules_text
+                market.venue_market_id, market.title, market.rules_text, market.close_time
             )
             print(f"\n  {label}")
             print(f"    market id          : {market.venue_market_id}")

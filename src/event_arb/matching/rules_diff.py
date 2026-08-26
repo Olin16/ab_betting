@@ -137,10 +137,10 @@ def compare_rules(
 ) -> RulesComparison:
     """Produce the structured, side-by-side rule differences for a candidate pair."""
     k_features = kalshi_features or NormalizedMarket.from_market(
-        kalshi.venue_market_id, kalshi.title, kalshi.rules_text
+        kalshi.venue_market_id, kalshi.title, kalshi.rules_text, kalshi.close_time
     )
     p_features = polymarket_features or NormalizedMarket.from_market(
-        polymarket.venue_market_id, polymarket.title, polymarket.rules_text
+        polymarket.venue_market_id, polymarket.title, polymarket.rules_text, polymarket.close_time
     )
 
     diffs: list[RuleDifference] = []

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from event_arb.domain.enums import ComparisonOperator
@@ -248,9 +248,20 @@ class NormalizedMarket:
     threshold: Decimal | None = None
     operator: ComparisonOperator | None = None
     unit: str | None = None
+    #: The venue's own scheduled close, carried through unmodified. This is *structured*
+    #: data both venues always publish, unlike ``dates``, which is regex-extracted from
+    #: prose and is empty whenever a title omits an explicit year — which live titles
+    #: usually do. It corroborates the date signal; it never contradicts it.
+    close_time: datetime | None = None
 
     @classmethod
-    def from_market(cls, market_id: str, title: str, rules_text: str = "") -> NormalizedMarket:
+    def from_market(
+        cls,
+        market_id: str,
+        title: str,
+        rules_text: str = "",
+        close_time: datetime | None = None,
+    ) -> NormalizedMarket:
         combined = f"{title} {rules_text}"
         # Thresholds are read from the title first: rules text often restates several
         # numbers (dates, deadlines) that are not the contract threshold.
@@ -265,4 +276,5 @@ class NormalizedMarket:
             threshold=threshold,
             operator=operator,
             unit=unit,
+            close_time=close_time,
         )
