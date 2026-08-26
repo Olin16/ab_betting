@@ -77,6 +77,19 @@ def test_authenticated_mode_is_a_separate_named_flag() -> None:
     assert args.authenticated_mode is True
 
 
+def test_smoke_parser_requires_a_dedicated_database() -> None:
+    args = build_parser().parse_args(
+        [
+            "smoke-test",
+            "--database",
+            "/tmp/schema-smoke.db",
+            "--yes-i-authorize-live-requests",
+        ]
+    )
+    assert args.database == "/tmp/schema-smoke.db"
+    assert args.yes_i_authorize_live_requests is True
+
+
 # ------------------------------------------------- plan matches what will be sent
 
 

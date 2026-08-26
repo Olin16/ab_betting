@@ -116,6 +116,33 @@ def test_plan_states_no_order_books_and_no_websockets() -> None:
     assert "websockets opened   : 0" in rendered
 
 
+def test_smoke_plan_adds_two_bounded_book_rows() -> None:
+    built = build_request_plan(
+        LIMITS,
+        _StubAdapter("https://external-api.kalshi.com/trade-api/v2"),
+        _StubAdapter("https://gateway.polymarket.us"),
+        VenueProduct.POLYMARKET_US,
+        orderbook_pairs=2,
+    )
+    assert built.worst_case_requests == 31
+    assert len(built.entries) == 5
+    assert built.entries[-2].count == "0..2"
+    assert built.entries[-1].count == "0..2"
+    assert "order books fetched : 0..4" in built.render()
+
+
+@pytest.mark.parametrize("pairs", [-1, 3])
+def test_plan_refuses_more_than_two_book_pairs(pairs: int) -> None:
+    with pytest.raises(ValueError, match="between 0 and 2"):
+        build_request_plan(
+            LIMITS,
+            _StubAdapter("https://kalshi.test"),
+            _StubAdapter("https://polymarket.test"),
+            VenueProduct.POLYMARKET_US,
+            orderbook_pairs=pairs,
+        )
+
+
 def test_plan_states_pagination_is_not_followed() -> None:
     built = make_plan()
     assert "NOT followed" in built.pagination

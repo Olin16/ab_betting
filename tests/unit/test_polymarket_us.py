@@ -316,6 +316,20 @@ async def test_targeted_retrieval_fetches_only_named_markets() -> None:
     assert seen == ["/v1/market/slug/s1", "/v1/market/slug/s2"]
 
 
+async def test_existence_recheck_does_not_parse_the_response_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/market/slug/s1"
+        return httpx.Response(200, content=b"deliberately not JSON")
+
+    client = PolymarketUSClient(settings(), client=transport(handler))
+    assert await client.market_exists("s1") is True
+
+
+async def test_existence_recheck_treats_404_as_absent() -> None:
+    client = PolymarketUSClient(settings(), client=transport(lambda request: httpx.Response(404)))
+    assert await client.market_exists("missing") is False
+
+
 async def test_full_book_is_fetched_for_a_market() -> None:
     body = json.loads((FIXTURES / "books/fed-cuts-25bps-september-2026.json").read_text())
 

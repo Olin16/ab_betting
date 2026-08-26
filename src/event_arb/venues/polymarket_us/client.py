@@ -61,6 +61,7 @@ class PolymarketUSClient(VenueAdapter):
         self._limiter = RateLimiter(settings.requests_per_second)
         #: Cursor from the last discovery response; reported, never followed.
         self.last_pagination_cursor: str | None = None
+        self.last_parse_failures = 0
 
     @property
     def discovery_base_url(self) -> str:
@@ -127,6 +128,7 @@ class PolymarketUSClient(VenueAdapter):
         if market_ids:
             return await self._fetch_markets_by_slug(market_ids)
 
+        self.last_parse_failures = 0
         params: dict[str, Any] = {"active": "true", "closed": "false"}
         if limit is not None:
             params["limit"] = limit
@@ -140,6 +142,7 @@ class PolymarketUSClient(VenueAdapter):
             try:
                 markets.append(parse_market(entry))
             except MarketDataError as exc:
+                self.last_parse_failures += 1
                 # One malformed market must not blind the scanner to the rest.
                 log.warning("polymarket_us.market.parse_failed", error=str(exc))
         return markets
@@ -162,6 +165,49 @@ class PolymarketUSClient(VenueAdapter):
             except MarketDataError as exc:
                 log.warning("polymarket_us.market.parse_failed", slug=slug, error=str(exc))
         return markets
+
+    async def market_exists(self, slug: str) -> bool:
+        """Check one public slug without reading or parsing the response body.
+
+        This narrow operation exists for the supervised smoke test. A 404 is an ordinary
+        negative result; every other error keeps the same fail-closed and Retry-After
+        behaviour as :meth:`_get`.
+        """
+        await self._limiter.acquire()
+        path = f"/v1/market/slug/{slug}"
+        request = self._client.build_request("GET", f"{self._base_url}{path}")
+        try:
+            response = await self._client.send(request, stream=True)
+        except httpx.TimeoutException as exc:
+            raise TransientError(f"Polymarket US timeout on {path}", Venue.POLYMARKET) from exc
+        except httpx.HTTPError as exc:
+            raise TransientError(
+                f"Polymarket US transport error on {path}", Venue.POLYMARKET
+            ) from exc
+        try:
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                delay = float(retry_after) if retry_after else None
+                self._limiter.pause_for(delay if delay is not None else _DEFAULT_429_PAUSE_SECONDS)
+                raise RateLimitError(
+                    f"Polymarket US rate limited on {path}",
+                    Venue.POLYMARKET,
+                    retry_after=delay,
+                )
+            if response.status_code == 404:
+                return False
+            if response.status_code >= 500:
+                raise TransientError(
+                    f"Polymarket US {response.status_code} on {path}", Venue.POLYMARKET
+                )
+            if response.status_code >= 400:
+                raise MarketDataError(
+                    f"Polymarket US {response.status_code} on {path}", Venue.POLYMARKET
+                )
+            self.health.record_message()
+            return True
+        finally:
+            await response.aclose()
 
     async def fetch_orderbook(self, market_id: str) -> OrderBook:
         """Fetch the full depth book for one market."""

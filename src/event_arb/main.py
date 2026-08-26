@@ -424,8 +424,7 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     # this can never be read as having re-validated the candidate itself.
     if limits.recheck_top > 0 and report.records:
         slugs = top_slugs_for_recheck(report, limits)
-        refetched = await scanner.adapters[Venue.POLYMARKET].discover_markets(market_ids=slugs)
-        confirmed = {m.venue_market_id for m in refetched}
+        confirmed = await _recheck_market_ids(scanner.adapters[Venue.POLYMARKET], slugs)
         checked_at = datetime.now(UTC)
         for index, record in enumerate(report.records):
             if record.pair.polymarket_market_id in confirmed:
@@ -464,6 +463,19 @@ async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
     print("  Nothing was approved, no order book was read, and no trade was simulated.")
     await scanner.close()
     return 0
+
+
+async def _recheck_market_ids(adapter: object, market_ids: list[str]) -> set[str]:
+    """Existence-only checks, using no-body reads when the adapter supports them."""
+    market_exists = getattr(adapter, "market_exists", None)
+    if callable(market_exists):
+        confirmed: set[str] = set()
+        for market_id in market_ids:
+            if await market_exists(market_id):
+                confirmed.add(market_id)
+        return confirmed
+    refetched = await adapter.discover_markets(market_ids=market_ids)  # type: ignore[attr-defined]
+    return {market.venue_market_id for market in refetched}
 
 
 async def _persist_shortlist(
@@ -603,6 +615,30 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_smoke_test(settings: Settings, args: argparse.Namespace) -> int:
+    """Run the separately approved, public-REST-only schema smoke test."""
+    from event_arb.smoke_test import SmokeTestError, run_supervised_smoke_test
+
+    database_path = Path(args.database)
+    resolved_database = await asyncio.to_thread(database_path.resolve)
+    configured = settings.model_copy(
+        update={"database_url": f"sqlite+aiosqlite:///{resolved_database}"}
+    )
+    doctor_result = await _cmd_doctor(configured, args)
+    if doctor_result != 0:
+        return doctor_result
+    try:
+        return await run_supervised_smoke_test(
+            configured,
+            database_path,
+            authorized=args.yes_i_authorize_live_requests,
+        )
+    except SmokeTestError as exc:
+        print(f"\n  SMOKE TEST BLOCKED: {exc}")
+        print("  No request was made.")
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="event-arb",
@@ -621,6 +657,20 @@ def build_parser() -> argparse.ArgumentParser:
     paper = subparsers.add_parser("paper", help="scan, then simulate two-leg execution")
     pairs = subparsers.add_parser("pairs", help="list candidate pairs and rule differences")
     subparsers.add_parser("doctor", help="print configuration and verify the safety posture")
+    smoke = subparsers.add_parser(
+        "smoke-test",
+        help="run the approved bounded public-REST production schema smoke test",
+    )
+    smoke.add_argument(
+        "--database",
+        required=True,
+        help="new dedicated SQLite file; data/event_arb.db and existing files are refused",
+    )
+    smoke.add_argument(
+        "--yes-i-authorize-live-requests",
+        action="store_true",
+        help="authorize the exact five-row request plan printed after doctor",
+    )
     trial = subparsers.add_parser(
         "trial", help="run the autonomous paper trial (ingest, scan, paper-execute)"
     )
@@ -724,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
         "paper": _cmd_paper,
         "pairs": _cmd_pairs,
         "doctor": _cmd_doctor,
+        "smoke-test": _cmd_smoke_test,
         "trial": _cmd_trial,
         "candidates": _cmd_candidates,
     }

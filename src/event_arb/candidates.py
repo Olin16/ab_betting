@@ -105,6 +105,7 @@ class RequestPlan:
     pagination: str
     polymarket_product: VenueProduct
     sends_any_credentials: bool
+    orderbook_pairs: int = 0
 
     def render(self) -> str:
         lines = ["Request plan", "=" * 62]
@@ -119,6 +120,17 @@ class RequestPlan:
             lines.append(f"      headers: {auth}")
             lines.append(f"      purpose: {entry.purpose}")
             lines.append(f"      count  : {entry.count}")
+        persistence = (
+            f"at most {self.orderbook_pairs * 2} market legs and "
+            f"{self.orderbook_pairs * 2} snapshots"
+            if self.orderbook_pairs
+            else f"at most {self.limits.max_results} candidates"
+        )
+        books = (
+            f"0..{self.orderbook_pairs * 2} (one snapshot per selected market)"
+            if self.orderbook_pairs
+            else "0 (candidate research never reads depth)"
+        )
         lines += [
             "-" * 62,
             f"  polymarket product  : {self.polymarket_product.value}",
@@ -126,8 +138,8 @@ class RequestPlan:
             f"  worst-case requests : {self.worst_case_requests}",
             f"  pagination          : {self.pagination}",
             f"  local comparisons   : up to {self.limits.max_local_comparisons:,}",
-            f"  persisted           : at most {self.limits.max_results} candidates",
-            "  order books fetched : 0 (candidate research never reads depth)",
+            f"  persisted           : {persistence}",
+            f"  order books fetched : {books}",
             "  websockets opened   : 0",
             f"  credentials         : {'SENT' if self.sends_any_credentials else 'none'}",
         ]
@@ -147,6 +159,8 @@ def build_request_plan(
     kalshi_adapter: object,
     polymarket_adapter: object,
     polymarket_product: VenueProduct,
+    *,
+    orderbook_pairs: int = 0,
 ) -> RequestPlan:
     """Describe every request, reading endpoints and auth state off the adapters."""
     kalshi_base = str(getattr(kalshi_adapter, "discovery_base_url", "(fixture)"))
@@ -158,7 +172,10 @@ def build_request_plan(
     polymarket_list_path = "/v1/markets" if is_us else "/markets"
     polymarket_one_path = "/v1/market/slug/{id}" if is_us else "/markets/{condition_id}"
 
-    entries = (
+    if orderbook_pairs < 0 or orderbook_pairs > 2:
+        raise ValueError("orderbook_pairs must be between 0 and 2")
+
+    entries = [
         PlannedRequest(
             method="GET",
             url=f"{kalshi_base}/markets",
@@ -188,15 +205,42 @@ def build_request_plan(
             f"(response body not read)",
             count=f"0..{limits.recheck_top}",
         ),
-    )
+    ]
+    if orderbook_pairs:
+        kalshi_book_path = "/markets/{ticker}/orderbook"
+        polymarket_book_path = "/v1/markets/{id}/book" if is_us else "/book?token_id={token_id}"
+        entries.extend(
+            (
+                PlannedRequest(
+                    method="GET",
+                    url=f"{kalshi_base}{kalshi_book_path}",
+                    params="(none)",
+                    sends_credentials=kalshi_auth,
+                    purpose="one order-book snapshot per selected Kalshi market",
+                    count=f"0..{orderbook_pairs}",
+                ),
+                PlannedRequest(
+                    method="GET",
+                    url=f"{polymarket_base}{polymarket_book_path}",
+                    params="(none)",
+                    sends_credentials=polymarket_auth,
+                    purpose=(
+                        "one order-book snapshot per selected Polymarket "
+                        f"{polymarket_product.value} market"
+                    ),
+                    count=f"0..{orderbook_pairs}",
+                ),
+            )
+        )
     return RequestPlan(
-        entries=entries,
+        entries=tuple(entries),
         minimum_requests=2,
-        worst_case_requests=2 + limits.recheck_top,
+        worst_case_requests=2 + limits.recheck_top + (orderbook_pairs * 2),
         limits=limits,
         pagination="one page per venue; a returned cursor is reported and NOT followed",
         polymarket_product=polymarket_product,
         sends_any_credentials=kalshi_auth or polymarket_auth,
+        orderbook_pairs=orderbook_pairs,
     )
 
 

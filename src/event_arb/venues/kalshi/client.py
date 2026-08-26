@@ -59,6 +59,10 @@ class KalshiClient(VenueAdapter):
         #: Cursor from the last discovery response. Recorded and reported, never followed:
         #: fetching beyond an authorised page is not a decision code should take alone.
         self.last_pagination_cursor: str | None = None
+        #: Per-call evidence for the supervised smoke test. Reset at the start of each
+        #: catalogue request so a prior run can never contaminate the current result.
+        self.last_parse_failures = 0
+        self.last_orderbook_schema_valid: bool | None = None
 
         # Signing is optional for market data. Kalshi serves series, events, markets and
         # order books over unauthenticated REST, so a credential-free read-only trial is
@@ -140,6 +144,7 @@ class KalshiClient(VenueAdapter):
         if market_ids:
             return await self._fetch_markets_by_ticker(market_ids)
 
+        self.last_parse_failures = 0
         params: dict[str, Any] = {"status": "open"}
         if limit is not None:
             params["limit"] = min(limit, 1000)
@@ -153,10 +158,12 @@ class KalshiClient(VenueAdapter):
         markets: list[VenueMarket] = []
         for entry in raw_markets:
             if not isinstance(entry, dict):
+                self.last_parse_failures += 1
                 continue
             try:
                 markets.append(parse_market(entry))
             except MarketDataError as exc:
+                self.last_parse_failures += 1
                 # One malformed market must not blind the scanner to every other market.
                 log.warning("kalshi.market.parse_failed", error=str(exc))
         return markets
@@ -182,6 +189,12 @@ class KalshiClient(VenueAdapter):
 
     async def fetch_orderbook(self, market_id: str) -> OrderBook:
         payload = await self._get(f"/markets/{market_id}/orderbook")
+        inner = payload.get("orderbook_fp")
+        self.last_orderbook_schema_valid = (
+            isinstance(inner, dict)
+            and isinstance(inner.get("yes_dollars"), list)
+            and isinstance(inner.get("no_dollars"), list)
+        )
         return parse_orderbook(market_id, payload, received_at=datetime.now(UTC))
 
     def stream(self, market_ids: list[str]) -> AsyncIterator[StreamEvent]:
