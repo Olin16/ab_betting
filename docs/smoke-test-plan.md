@@ -1,9 +1,10 @@
-# Supervised live read-only smoke test — APPROVED, BLOCKED, NOT EXECUTED
+# Supervised live read-only smoke test — APPROVED, READY, NOT EXECUTED
 
-**Status: approved by the operator on 2026-08-24, then blocked at the preflight gate. No
-request in this document has been sent.**
+**Status: approved by the operator on 2026-08-24. The runner gap found by the preflight
+gate is now closed and regression-tested offline. No request in this document has been
+sent.**
 
-> ## Execution blocker — recorded 2026-08-24
+> ## Preflight blocker history — recorded 2026-08-24, resolved 2026-08-26
 >
 > The preflight gate in §7.2 requires that the **derived** request plan match §1 exactly.
 > It does not. The plan is derived by `event_arb.candidates.build_request_plan`, which is
@@ -28,9 +29,11 @@ request in this document has been sent.**
 > their market set from `TRIAL__WATCHED_PAIRS` rather than from the shortlist, and re-run
 > discovery, which would issue catalogue requests beyond the §1 budget.
 >
-> Success criteria **3**, **5** and **6** in §5 depend on rows 4 and 5, so they cannot be
-> evaluated until this is closed. Per §7 the correct response is to stop, not to
-> substitute a different command for the approved one.
+> Success criteria **3**, **5** and **6** depend on rows 4 and 5, so the first approved
+> attempt correctly stopped. `event-arb smoke-test` now derives all five rows, enforces
+> them before transmission, caps the worst case at 31, and records each response. The
+> metadata-only `candidates discover` command remains unchanged in purpose and still reads
+> no books.
 
 The purpose is narrow: confirm that the two public REST surfaces still behave as
 `docs/api-assumptions.md` records, under supervision, at the smallest scope that can answer
@@ -152,8 +155,25 @@ Before the run:
 2. The preflight request plan is printed and must match §1 exactly, including
    `credentials : none` and `websockets opened : 0`. The plan is **derived from the
    adapters that will serve the requests**, so it cannot drift from what is sent.
-3. Confirm no venue credentials are configured. If any are, the command refuses to run
-   rather than silently sending them.
+3. Confirm no venue credentials are configured. If any are, the command refuses to run;
+   unlike general candidate research, the smoke-test command has no authenticated-mode
+   escape hatch.
+
+Run only after choosing a brand-new dedicated path:
+
+```bash
+EVENT_ARB_DATA_SOURCE=live \
+EVENT_ARB_KALSHI__ENVIRONMENT=prod \
+EVENT_ARB_POLYMARKET__PRODUCT=us \
+EVENT_ARB_INGESTION_MODE=rest_polling \
+event-arb smoke-test --database /tmp/event-arb-schema-smoke.db \
+  --yes-i-authorize-live-requests
+```
+
+The command requires a new file under the operating system's temporary directory and
+refuses `data/event_arb.db`, an existing database file, credentials, the demo environment,
+Polymarket Global, WebSocket mode, a plan other than the five rows in §1, or an
+endpoint/parameter/header that was not declared in that plan.
 
 Structural, not procedural:
 

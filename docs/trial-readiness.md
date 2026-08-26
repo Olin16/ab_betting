@@ -15,14 +15,14 @@ Tracks the agreed plan toward a supervised smoke test and then an unattended pap
 
 | # | Step | Status |
 | --- | --- | --- |
-| 1 | Review venue terms and developer agreement | **Done** — Global and US both reviewed |
+| 1 | Review venue terms and developer agreement | **Done for technical design** — operator eligibility/permission confirmations remain human gates |
 | 2 | Watched-pair configuration and targeted refresh | **Done** |
 | 3 | Persistence and safe approval restore | **Done** |
 | 4 | Continuous synchronization; resolve sequence behaviour | **Done** |
 | 5 | Continuous scanning and automated paper execution | **Done** |
 | 6 | Retention and operational hardening | **Done** |
-| 7 | Supervised live read-only smoke test | Plan written (`docs/smoke-test-plan.md`), **not approved, not executed** |
-| 8 | Unattended paper trial | Blocked on step 7 evidence. F2/F5/F6 are done; see below |
+| 7 | Supervised live read-only smoke test | **Approved; runner ready; not executed** (`docs/smoke-test-plan.md`) |
+| 8 | Unattended paper trial | Blocked on step 7 evidence and the human gates below. F2/F5/F6 are done |
 
 ## What is done
 
@@ -126,8 +126,9 @@ from merely running in live mode.
 
 F1–F10 from the readiness review are implemented and each has a regression test. F2 (fee
 policy persistence), F5 (product in every identity) and F6 (honest execution evidence) were
-the three that blocked step 8; they no longer do. Step 8 remains blocked on step 7 evidence
-alone, which is a human gate rather than a code gap.
+the three code findings that blocked step 8; they no longer do. Step 8 still requires step
+7 evidence plus the operator confirmations below. Those are human gates rather than code
+gaps.
 
 Two limits are worth restating, because they are what "done" means here rather than
 qualifications on it:

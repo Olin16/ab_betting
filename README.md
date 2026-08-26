@@ -71,6 +71,11 @@ Everything below runs entirely on recorded fixtures — no network, no credentia
 .venv/bin/event-arb serve
 ```
 
+The separately approved production-schema smoke test is documented in
+`docs/smoke-test-plan.md`. It requires live mode, Kalshi production, Polymarket US public
+REST, and a brand-new dedicated SQLite path; it refuses credentials and cannot submit an
+order. It is intentionally not included in the fixture-only quick-start commands above.
+
 `event-arb --help` lists all commands. With Docker:
 
 ```bash

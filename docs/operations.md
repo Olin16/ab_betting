@@ -337,6 +337,30 @@ existing human dispositions (approved, rejected, suspended, expert review, under
 are read verbatim and **never written back**. The command persists only pairs that do not
 already exist, so it has no way to alter a decision a human recorded.
 
+## Supervised production schema smoke test
+
+`event-arb smoke-test` is the only command authorized to execute
+`docs/smoke-test-plan.md`. It is not candidate research and it is not a trial. It derives
+and prints all five approved endpoint rows, then enforces those rows at the HTTP request
+hook before a byte can be transmitted.
+
+```bash
+EVENT_ARB_DATA_SOURCE=live \
+EVENT_ARB_KALSHI__ENVIRONMENT=prod \
+EVENT_ARB_POLYMARKET__PRODUCT=us \
+EVENT_ARB_INGESTION_MODE=rest_polling \
+event-arb smoke-test --database /tmp/event-arb-schema-smoke.db \
+  --yes-i-authorize-live-requests
+```
+
+The database path is required, must be a new file, and must live under the operating
+system's temporary directory. The command rejects
+`data/event_arb.db`, credentials, authenticated mode, WebSockets, Polymarket Global,
+Kalshi demo, pagination, write verbs, undeclared hosts/paths/parameters, and request 32.
+It reports every request and status, persists at most four selected market records plus
+four snapshots, and prints full side-by-side rules only after every success criterion
+passes. Selection is retrieval for manual review, never settlement-equivalence approval.
+
 ### Request cost of REST paper trading
 
 Live REST paper trading fetches a **fresh snapshot at each simulated leg's arrival**, so a
