@@ -13,6 +13,27 @@ Checked against official documentation on **2026-08-21**. Treat every endpoint a
 changeable. Each item below is either **VERIFIED** (read from official docs on that date) or
 **ASSUMPTION** (needs confirmation before any live use).
 
+## Bounded supervised observation — 2026-08-26
+
+The approved public-REST smoke test stopped after its two catalogue requests:
+
+- Kalshi production `GET /markets?status=open&limit=250` returned `200` without
+  credentials in 0.203 s. It returned a pagination cursor, which was reported and not
+  followed. All 250 retained-in-memory entries parsed, and the checked documented market
+  fields matched the assumptions below.
+- Polymarket US public `GET /v1/markets?active=true&closed=false&limit=250` returned `200`
+  without credentials in 1.438 s and returned no cursor. All 250 entries parsed.
+  `feeCoefficient` was present, `outcomes` remained a JSON-encoded string,
+  `orderPriceMinTickSize` was positive, and `resolutionSource` remained absent across the
+  page.
+- The 62,500 local comparisons produced no candidate at `min_score=0.55`, so the run
+  stopped as required. No existence recheck or order-book endpoint was reached.
+
+Therefore this observation reconfirms the two public catalogue surfaces and their checked
+market fields only. It does **not** refresh A2/order-book evidence, book normalization,
+refresh-batch timing, pair quality, or settlement equivalence. Request count: 2; total
+elapsed time: 2.291 s; credentials/authenticated hosts/WebSockets/write verbs: zero.
+
 ---
 
 ## Kalshi

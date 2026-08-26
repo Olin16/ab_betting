@@ -1,13 +1,32 @@
-# Supervised live read-only smoke test — APPROVED, READY, NOT EXECUTED
+# Supervised live read-only smoke test — ATTEMPTED, FAILED, NOT PASSED
 
-**Status: approved by the operator on 2026-08-24. The runner gap found by the preflight
-gate is now closed and regression-tested offline. No request in this document has been
-sent.**
+**Status: approved by the operator on 2026-08-24 and attempted on 2026-08-26. The runner
+gap found by the first preflight is closed, but the smoke test did not pass. It stopped
+after the two catalogue requests because the bounded catalogues produced no candidate
+pair at the documented threshold.**
+
+> ## Attempt result — 2026-08-26
+>
+> - `GET ...kalshi.../markets?status=open&limit=250` — `200`, 0.203 s, **cursor returned**.
+> - `GET ...polymarket.us/v1/markets?active=true&closed=false&limit=250` — `200`,
+>   1.438 s, no cursor.
+> - 250 markets from each venue parsed; zero mapper failures and zero checked catalogue
+>   schema differences.
+> - 62,500 local comparisons produced zero candidates at `min_score=0.55`.
+> - The run stopped immediately. Rows 3–5 were not requested; no books were fetched, no
+>   pair or market metadata was retained, and the dedicated database contains one audit
+>   row only.
+> - Total: **2 requests**, 2.291 s. No credentials, authenticated hosts, WebSockets, write
+>   verbs, order endpoints, order preparation, or order simulation.
+>
+> This is a scope/result failure, not evidence that either venue's book schema passed or
+> failed. Do not widen the catalogue, follow the Kalshi cursor, lower the threshold, or
+> substitute hand-entered market ids without a new explicit decision.
 
 > ## Preflight blocker history — recorded 2026-08-24, resolved 2026-08-26
 >
 > The preflight gate in §7.2 requires that the **derived** request plan match §1 exactly.
-> It does not. The plan is derived by `event_arb.candidates.build_request_plan`, which is
+> At the time it did not. The plan is derived by `event_arb.candidates.build_request_plan`, which was
 > the only request plan in the codebase, and it describes **three** of the five rows in §1:
 >
 > | §1 row | Endpoint | In derived plan? |

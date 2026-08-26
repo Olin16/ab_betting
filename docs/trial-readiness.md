@@ -21,7 +21,7 @@ Tracks the agreed plan toward a supervised smoke test and then an unattended pap
 | 4 | Continuous synchronization; resolve sequence behaviour | **Done** |
 | 5 | Continuous scanning and automated paper execution | **Done** |
 | 6 | Retention and operational hardening | **Done** |
-| 7 | Supervised live read-only smoke test | **Approved; runner ready; not executed** (`docs/smoke-test-plan.md`) |
+| 7 | Supervised live read-only smoke test | **Attempted 2026-08-26; failed after 2 catalogue requests; book criteria unmeasured** (`docs/smoke-test-plan.md`) |
 | 8 | Unattended paper trial | Blocked on step 7 evidence and the human gates below. F2/F5/F6 are done |
 
 ## What is done
