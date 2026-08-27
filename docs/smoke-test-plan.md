@@ -31,8 +31,12 @@ pair at the documented threshold.**
 > 0.5316. The threshold had been asserted as a value but never exercised as behaviour —
 > the fixture path runs at 0.4 — so the live run was its first execution.
 >
-> Commit `d0e79e9` lets the venue's own close time carry that signal when no title states a
-> year, with regression tests at the production threshold. **Local scoring only: §1, §2 and
+> Commits `d0e79e9` and `ca24709` let the venue's own close time carry that signal when no
+> title states a year, with regression tests at the production threshold. A review of
+> `d0e79e9` found its fallback also fired when only *one* market stated a date, letting
+> matching close days award agreement over a stated date that went unread; `ca24709`
+> separates the three cases and pins them. **That defect was caught before any live
+> request.** **Local scoring only: §1, §2 and
 > §3 below are untouched, and no request was sent.** Because the scorer has changed since
 > the 2026-08-24 approval, any re-run needs fresh authorization even where the request plan
 > is byte-identical. The options are compared in §6 of the diagnosis; the recommendation is

@@ -98,21 +98,33 @@ take a live request — so it is stated as a risk, not quantified.
 
 ## 5. Fix applied offline (no request)
 
-Commit `d0e79e9` lets the venue's own close time carry the date signal when neither title
-states a year. Both mappers already populate `close_time` from data both venues always
+Commits `d0e79e9` and `ca24709` let the venue's own close time carry the date signal when
+neither title states a year. Both mappers already populate `close_time` from data both venues always
 publish (Kalshi `close_time`, Polymarket US `endDate`) on the object the scorer receives.
 
-Corroboration only, deliberately asymmetric:
+The rule is that **what a market states outranks when it happens to close**, so the close
+time is consulted only where no statement exists to outrank it. Three cases, kept apart:
 
-- identical close **day** with no prose dates → date agreement;
-- close-time **mismatch** → back to the neutral imputation, *never* the contradiction
-  penalty, because venues legitimately close the same question at different times;
-- a stated **prose** date conflict → still the hard ×0.35 penalty, unchanged;
-- a shared close **alone** cannot carry a pair — unrelated contracts routinely settle the
-  same day, and surface wording must still agree.
+1. **both** state a date → compare the statements and nothing else; a conflict still draws
+   the hard ×0.35 penalty, unchanged;
+2. **neither** states one → identical close **days** corroborate. A close-time *mismatch*
+   returns to the neutral imputation and is never read as contradiction, because venues
+   legitimately close the same question at different times;
+3. **exactly one** states a date → stay neutral, and do not consult the close times at all.
+
+A shared close alone cannot carry a pair either way: unrelated contracts routinely settle
+the same day, and surface wording must still agree.
+
+Case 3 is a correction. As first written (`d0e79e9`) the fallback was guarded on
+`not k.dates or not p.dates`, which also admitted the one-sided case — the stated date went
+unread and matching close days awarded full agreement regardless, inflating the score by a
+fixed 0.125 on evidence that had been compared to nothing. `ca24709` separates the three
+cases and adds regression tests, two of which fail against `d0e79e9` as shipped. **The
+defect was caught in review before any live request; case 1 was never affected, since the
+old guard was false whenever both sides carried dates.**
 
 Measured offline on the reference corpus: the canonical Fed pair moves 0.5316 → 0.7816, and
-retrieval at 0.55 goes from one pair to the two the smoke test requires. Six regression
+retrieval at 0.55 goes from one pair to the two the smoke test requires. Nine regression
 tests now exercise the production threshold, including one that fails if live-shaped titles
 stop retrieving at 0.55.
 
