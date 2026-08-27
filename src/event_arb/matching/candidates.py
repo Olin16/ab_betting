@@ -123,9 +123,22 @@ def score_pair(
     )
 
     # --- dates ---
+    #
+    # Three cases, kept apart deliberately. What a market *states* always outranks when it
+    # happens to close, and the close time is only ever consulted where no statement exists
+    # to outrank it.
     dates_agree: bool | None
-    if not kalshi_features.dates or not polymarket_features.dates:
-        # Prose extraction found nothing, which on live catalogues is the normal case:
+    if kalshi_features.dates and polymarket_features.dates:
+        # 1. Both state a date. Compare the statements and nothing else.
+        if kalshi_features.dates & polymarket_features.dates:
+            dates_agree = True
+            date_component = Decimal("1")
+        else:
+            dates_agree = False
+            date_component = Decimal("0")
+            notes.append("extracted dates do not overlap")
+    elif not kalshi_features.dates and not polymarket_features.dates:
+        # 2. Neither states a date, which on live catalogues is the normal case:
         # ``extract_dates`` deliberately requires an explicit year, and venue titles
         # ("Fed decision in September?") rarely carry one. Falling straight through to the
         # neutral 0.5 discards a quarter of the score for almost every real pair and leaves
@@ -143,14 +156,17 @@ def score_pair(
         else:
             dates_agree = None
             date_component = Decimal("0.5")
-            notes.append("no date extracted from at least one market")
-    elif kalshi_features.dates & polymarket_features.dates:
-        dates_agree = True
-        date_component = Decimal("1")
+            notes.append("no date extracted from either market")
     else:
-        dates_agree = False
-        date_component = Decimal("0")
-        notes.append("extracted dates do not overlap")
+        # 3. Exactly one states a date. Stay neutral, and in particular do not let the
+        # close times award agreement: the stated date would have gone unread, so a market
+        # explicitly about the 22nd could be handed full date agreement with one that
+        # merely happens to close on the same day. There is nothing to compare the
+        # statement against, and that is the honest answer rather than a reason to
+        # substitute a weaker signal.
+        dates_agree = None
+        date_component = Decimal("0.5")
+        notes.append("only one market states a date; close times are not read as agreement")
 
     # --- thresholds ---
     thresholds_agree: bool | None

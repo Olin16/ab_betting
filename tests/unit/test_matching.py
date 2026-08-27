@@ -212,6 +212,60 @@ def test_a_stated_date_conflict_still_disqualifies_despite_matching_close_times(
     assert score.score < Decimal("0.4")
 
 
+def test_one_stated_date_is_never_rescued_by_a_matching_close_day() -> None:
+    """A stated date outranks a close time, so a lone one must not be routed around.
+
+    The fallback first shipped guarded on ``not k.dates or not p.dates``, which also
+    admitted the case where exactly one market states a date. The stated date then went
+    unread and the close days awarded full agreement anyway — a market explicitly about the
+    22nd could be scored as agreeing with one that merely closes that day. There is nothing
+    to compare a lone statement against, and neutral is the honest answer.
+    """
+    close = datetime(2026, 8, 23, 4, tzinfo=UTC)
+    k = NormalizedMarket.from_market(
+        "K", "Will NYC high be above 90F on 2026-08-22?", close_time=close
+    )
+    p = NormalizedMarket.from_market("P", "NYC temperature record?", close_time=close)
+
+    score = score_pair(k, p)
+
+    assert k.dates and not p.dates, "exactly one side states a date; that is the case here"
+    assert score.dates_agree is None
+
+
+def test_a_lone_stated_date_scores_as_if_no_close_times_existed() -> None:
+    """The one-sided case must not consult the close times at all, not merely withhold True."""
+    close = datetime(2026, 8, 23, 4, tzinfo=UTC)
+    title_k, title_p = "Will NYC high be above 90F on 2026-08-22?", "NYC temperature record?"
+
+    with_close = score_pair(
+        NormalizedMarket.from_market("K", title_k, close_time=close),
+        NormalizedMarket.from_market("P", title_p, close_time=close),
+    )
+    without_close = score_pair(
+        NormalizedMarket.from_market("K", title_k),
+        NormalizedMarket.from_market("P", title_p),
+    )
+
+    assert with_close.score == without_close.score
+
+
+def test_two_stated_dates_are_compared_to_each_other_not_to_the_close() -> None:
+    """Case 1 is untouched by the fallback: a stated conflict still disqualifies."""
+    close = datetime(2026, 8, 23, 4, tzinfo=UTC)
+    k = NormalizedMarket.from_market(
+        "K", "Will NYC high be above 90F on 2026-08-22?", close_time=close
+    )
+    p = NormalizedMarket.from_market(
+        "P", "Will NYC high be above 90F on 2026-08-29?", close_time=close
+    )
+
+    score = score_pair(k, p)
+
+    assert score.dates_agree is False
+    assert score.score < Decimal("0.4")
+
+
 def test_a_shared_close_time_alone_cannot_manufacture_a_candidate() -> None:
     """Unrelated contracts routinely share a close. Surface wording still has to agree."""
     close = datetime(2026, 11, 6, 16, tzinfo=UTC)
