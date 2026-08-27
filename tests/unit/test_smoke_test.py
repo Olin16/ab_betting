@@ -74,6 +74,24 @@ def test_documented_contract_refuses_credentials() -> None:
         assert_documented_request_contract(production_plan(credentials=True))
 
 
+def test_smoke_test_has_no_authenticated_mode_escape_hatch() -> None:
+    """§1 and §7.3 both promise credentials cannot be waived. Hold the parser to it.
+
+    ``--authenticated-mode`` is a real flag on ``candidates discover``, and §1 of the plan
+    once said it applied here too. It does not, and the operator is asked to authorize §1
+    as written, so the absence is pinned rather than left to prose.
+    """
+    from event_arb.main import build_parser
+
+    parser = build_parser()
+    parser.parse_args(["smoke-test", "--database", "/tmp/does-not-matter.db"])
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["smoke-test", "--database", "/tmp/does-not-matter.db", "--authenticated-mode"]
+        )
+
+
 def test_selection_prefers_two_distinct_settlement_styles() -> None:
     report = DiscoveryReport(
         records=[

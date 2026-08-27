@@ -105,7 +105,17 @@ authenticated host is contacted.
 
 Headers: no `Authorization`, no signature, no API key. With no credentials configured the
 signer is `None` and `_auth_headers()` returns `{}`. The command additionally **refuses to
-start** if credentials are present, unless `--authenticated-mode` is passed explicitly.
+start** if credentials are present, and there is no flag that overrides that — see §7.3.
+
+> **Corrected 2026-08-26, before any re-run.** This paragraph previously ended "unless
+> `--authenticated-mode` is passed explicitly", which was carried over from
+> `candidates discover`. That flag exists only on `candidates discover`; the `smoke-test`
+> subparser takes `--database` and `--yes-i-authorize-live-requests` and nothing else, so
+> `smoke-test --authenticated-mode` is rejected by the parser. §7.3 already said so, which
+> left §1 and §7 contradicting each other on a credential-safety point. The sentence
+> overstated what the command permits, so it is corrected here rather than left standing in
+> text an operator is asked to authorize. Nothing else in §1 changes: the endpoint table,
+> params, headers and counts are as approved.
 
 ## 2. Request budget
 
