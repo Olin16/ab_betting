@@ -367,3 +367,98 @@ Live REST paper trading fetches a **fresh snapshot at each simulated leg's arriv
 paper trade costs two additional rate-limited market-data requests beyond the polling
 cycle. Without that, leg 2 would re-read leg 1's snapshot and every fill would appear
 clean. See `docs/risk-model.md`.
+
+## REST-only live-market paper trial
+
+The configuration below is what a credential-free live paper trial requires. It is
+documentation, not authorization: the trial must not be started without a separate
+explicit decision, and the human gates in `docs/trial-readiness.md` are prerequisites, not
+paperwork to follow later. Nothing here enables order submission — `DisabledExecutionAdapter`
+is still the only execution adapter that exists.
+
+**Prerequisites.** The smoke test in `docs/smoke-test-plan.md` has passed on the current
+build; at least one pair has been approved by a named human who read both rulebooks end to
+end; and the venue, eligibility and API-permission gates are closed.
+
+### Configuration
+
+```bash
+EVENT_ARB_DATA_SOURCE=live \
+EVENT_ARB_KALSHI__ENVIRONMENT=prod \
+EVENT_ARB_POLYMARKET__PRODUCT=us \
+EVENT_ARB_INGESTION_MODE=rest_polling \
+EVENT_ARB_TRIAL__ENABLED=true \
+EVENT_ARB_TRIAL__WATCHED_PAIRS='[{"kalshi_market_id":"<TICKER>","polymarket_market_id":"<slug>","outcomes_inverted":false,"note":"approved <date> by <name>"}]' \
+event-arb trial --rest-only
+```
+
+`--rest-only` is belt-and-braces: `rest_polling` already prevents a WebSocket, because both
+venues sign the handshake even for public market-data channels and neither can be reached
+without credentials.
+
+`outcomes_inverted` records that Polymarket YES corresponds to Kalshi NO. It is set by the
+human who approved the pair and is never inferred.
+
+### `watched_pairs` is not optional in live mode
+
+Leaving it empty is the one configuration that turns a bounded trial into a venue-wide
+listing. `Scanner.discover()` targets only the watched markets when pairs are configured;
+with none configured it calls `discover_markets()` with no ids and no limit, which issues
+`GET /markets?status=open` against Kalshi with no `limit` at all. `event-arb trial` then
+falls back to `generate_pairs(min_score=0.4)` over whatever came back. Both are wrong for a
+trial: §3 of the Kalshi Developer Agreement ties data access to markets you intend to
+trade, and pagination is unimplemented, so the result is silently truncated as well as
+overbroad.
+
+### Freshness budget
+
+`required book age = refresh batch + clock tolerance`. Before any refresh has been
+observed the batch is estimated at `assumed_request_seconds` (0.4 s) per watched market;
+afterwards the measured batch replaces the estimate. With the default
+`max_book_age_ms=2000` and `clock_tolerance_seconds=0.5`:
+
+| Watched pairs | Markets | Estimated batch | Required bound | Against the 2000 ms default |
+| --- | --- | --- | --- | --- |
+| 1 | 2 | 0.80 s | 1300 ms | fits |
+| 2 | 4 | 1.60 s | 2100 ms | **too tight at startup** |
+| 3 | 6 | 2.40 s | 2900 ms | **too tight at startup** |
+
+So **one pair fits the defaults and two do not.** `event-arb doctor` prints the required
+value for the configuration it is given; run it with the trial's own environment, not the
+bare defaults, or it will report the budget for zero watched markets and say OK.
+
+Two pairs are reachable, but only deliberately: watch them and raise `max_book_age_ms` to
+at least 2100, accepting that a higher bound means acting on older prices — read the
+warning under *Setting max_book_age_ms* first. The estimate is a pre-flight fallback and is
+likely pessimistic for single-market book fetches, so the measured batch after the first
+refresh is the number worth configuring against.
+
+`validate_freshness_budget` warns; it does not refuse. `TrialRunner.start()` logs
+`trial.freshness_budget` and starts anyway. On an unattended run that warning scrolls past,
+and the symptom is not an error but a quiet one: every scan rejects its books and the trial
+reports nothing found. Watch
+`event_arb_opportunities_rejected_total{reason="book_stale"}` from the first minute.
+
+### Request cost
+
+Per refresh cycle the trial issues two order-book requests per watched pair (one per leg),
+plus two more per simulated paper trade, through the same 5 req/s per-venue bucket:
+
+    requests/minute ≈ (2 × watched pairs × 60 / cycle_interval_seconds) + (2 × paper trades/minute)
+
+One pair on the default 5 s cycle is 24 requests/minute split across two venues — 0.2 req/s
+per venue against a 5 req/s bucket.
+
+### Stop conditions for a first trial
+
+Stop and investigate rather than letting it run:
+
+- `event_arb_venue_up` at 0 for more than a minute, or any `trial.adapter_unhealthy` alert;
+- a sustained `event_arb_opportunities_rejected_total{reason="book_stale"}` rate, which
+  means the freshness budget is wrong rather than the market being quiet;
+- any `429`, which means the bucket is mis-set for the real access tier;
+- `event_arb_paper_trade_evidence_total{grade="measured"}` staying at zero, which means no
+  trade has yet priced leg 2 against a book that moved, so the hedge rate is still not
+  evidence;
+- a suspended approval on restore, which means a rulebook or close time changed underneath
+  an approved pair.
