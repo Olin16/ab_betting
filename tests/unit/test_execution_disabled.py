@@ -6,8 +6,10 @@ them fail, the build can place a real order and must not be run.
 
 from __future__ import annotations
 
+import ast
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -261,3 +263,79 @@ def test_total_exposure_limit_is_enforced() -> None:
         open_exposure=Decimal("1995"), limits=TradingLimits(max_total_exposure=Decimal("2000"))
     )
     assert "total exposure" in controls.evaluate(make_opportunity(), approved_pair()).denied_reason
+
+
+# ------------------------------------------------- structural claims made to the operator
+#
+# docs/smoke-test-plan.md §7 asks the operator to authorize a live run on three structural
+# grounds: the disabled adapter is the only one there is, no read-only client contains a
+# write verb, and nothing can sign an order. Those were established by reading the code
+# once. A one-time grep does not survive the next edit, and §7 is read as a standing
+# guarantee rather than a note about one afternoon, so they are pinned here.
+
+_REPO = Path(__file__).resolve().parents[2]
+_SOURCES = sorted((_REPO / "src").rglob("*.py"))
+
+
+def _classes_deriving_from(name: str) -> list[str]:
+    found: list[str] = []
+    for path in _SOURCES:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            bases = {
+                base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
+                for base in node.bases
+            }
+            if name in bases:
+                found.append(f"{path.relative_to(_REPO)}:{node.name}")
+    return sorted(found)
+
+
+def test_the_disabled_adapter_is_the_only_execution_adapter() -> None:
+    """A second implementation is the one change that would make trading possible."""
+    assert _classes_deriving_from("ExecutionAdapter") == [
+        "src/event_arb/execution/disabled.py:DisabledExecutionAdapter"
+    ]
+
+
+def test_nothing_implements_the_order_signer_interface() -> None:
+    """``Signer`` is a deliberately empty seat: an order cannot be signed if none exists.
+
+    ``KalshiSigner`` is not a counterexample and must not become one. It is a standalone
+    dataclass that signs ``(timestamp, method, path)`` for authenticated *reads*; it takes
+    no body, so it cannot sign an order payload.
+    """
+    assert _classes_deriving_from("Signer") == []
+
+
+def test_no_venue_client_contains_a_write_verb() -> None:
+    """§7's grep, kept running.
+
+    AST rather than text so that a docstring explaining the rule cannot satisfy it, and so
+    that ``store.put`` elsewhere in the tree is not mistaken for an HTTP write.
+    """
+    forbidden = {"post", "put", "patch", "delete"}
+    offenders: list[str] = []
+    for path in sorted((_REPO / "src" / "event_arb" / "venues").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in forbidden
+            ):
+                offenders.append(f"{path.relative_to(_REPO)}:{node.lineno} .{node.func.attr}()")
+    assert offenders == []
+
+
+def test_no_source_file_names_an_order_submission_endpoint() -> None:
+    """The venue order paths, in any string literal anywhere in the package."""
+    order_paths = ("/trade-api/v2/portfolio/orders", "/v1/orders", "/orders")
+    offenders: list[str] = []
+    for path in _SOURCES:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if any(node.value.endswith(suffix) for suffix in order_paths):
+                offenders.append(f"{path.relative_to(_REPO)}:{node.lineno} {node.value!r}")
+    assert offenders == []
