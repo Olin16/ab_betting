@@ -1,0 +1,19 @@
+scenario: 02-failing-scan
+  note: every scan raised; the run stopped rather than reporting a quiet market
+  note: stopped_reason: 5 consecutive failures (scan)
+
+Paper reconciliation — 2026-09-22T23:49:27.371578+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 0 (0 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+    [ok ] polymarket_global:USDC 10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+
+  trade/ledger integrity : sound
+    trades verified      : 0 (0 entr(ies) checked)
+
+  stop causes:
+    5 consecutive failures (scan)

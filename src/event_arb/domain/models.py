@@ -375,6 +375,10 @@ class LegPlan(_Frozen):
     """The executable plan for one leg, derived by walking real book depth."""
 
     venue: Venue
+    #: Which product within the venue brand. Part of the leg's identity, and of the
+    #: simulated cash account it draws on: Kalshi USD and Polymarket US USD are both USD
+    #: but are not the same money.
+    product: VenueProduct = VenueProduct.NONE
     market_id: str
     outcome: Outcome
     quantity: Decimal

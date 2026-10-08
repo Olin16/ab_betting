@@ -15,8 +15,11 @@ __all__ = [
     "opportunities_detected",
     "opportunities_rejected",
     "paper_refetches",
+    "paper_settlements",
     "paper_trade_evidence",
     "paper_trades",
+    "paper_trades_invalidated",
+    "paper_trades_refused",
     "render_metrics",
     "resyncs",
     "venue_up",
@@ -80,6 +83,28 @@ paper_trade_evidence = Counter(
     "Simulated trades by how much their leg-2 book is worth as evidence: measured, "
     "unchanged_reread, or modelled. Only 'measured' supports a hedge-rate claim.",
     ["grade"],
+    registry=REGISTRY,
+)
+paper_trades_refused = Counter(
+    "event_arb_paper_trades_refused_total",
+    "Detected opportunities the paper capital gate refused, by reason. A trial with a "
+    "rising count here is not observing a quiet market; it is out of simulated funds or "
+    "at a configured limit.",
+    ["reason"],
+    registry=REGISTRY,
+)
+paper_trades_invalidated = Counter(
+    "event_arb_paper_trades_invalidated_total",
+    "Simulated attempts whose accounting storage refused, by the stage that failed. "
+    "These were never published to the portfolio, so they appear in no other count — "
+    "any value above zero means the run's execution record has a stated hole in it.",
+    ["stage"],
+    registry=REGISTRY,
+)
+paper_settlements = Counter(
+    "event_arb_paper_settlements_total",
+    "Paper trades whose settlement was recorded, by whether the hedge held.",
+    ["hedge_held"],
     registry=REGISTRY,
 )
 venue_up = Gauge(

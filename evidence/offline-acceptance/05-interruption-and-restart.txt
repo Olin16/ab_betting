@@ -1,0 +1,22 @@
+scenario: 05-interruption-and-restart
+  note: the leg-2 book read raised after leg 1 had filled
+  note: in-memory balances before the restart: {'kalshi:USD': '9943.2600', 'polymarket_global:USDC': '10000.0000'}
+  note: a fresh process reads the same balances and the same open exposure
+  note: the attempt is carried as INTERRUPTED and excluded from hedge statistics
+
+Paper reconciliation — 2026-09-22T23:49:27.573873+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 1 (0 settled)
+  open unhedged qty   : 100.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 -56.7400 = 9943.2600   reserved=0.0000 available=9943.2600
+    [ok ] polymarket_global:USDC 10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+
+  trade/ledger integrity : sound
+    trades verified      : 1 (2 entr(ies) checked)
+
+  open positions      : 1
+    0383e987-da1b-421d-bf9c-181b18548c1f  kalshi:USD  100.00 @ 0.5500  (interrupted)
+  leg-2 evidence      : {'unchanged_reread': 1}

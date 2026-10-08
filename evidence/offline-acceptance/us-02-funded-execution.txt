@@ -1,0 +1,17 @@
+scenario: us-02-funded-execution
+  note: one funded US trade; both legs settled in USD on separate accounts
+  note: ending balances: {'kalshi:USD': '9951.2500', 'polymarket_us:USD': '9960.5900'}
+
+Paper reconciliation — 2026-09-22T23:49:28.037432+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 1 (0 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 -48.7500 = 9951.2500   reserved=0.0000 available=9951.2500
+    [ok ] polymarket_us:USD      10000.0000 -39.4100 = 9960.5900   reserved=0.0000 available=9960.5900
+
+  trade/ledger integrity : sound
+    trades verified      : 1 (4 entr(ies) checked)
+  leg-2 evidence      : {'unchanged_reread': 1}

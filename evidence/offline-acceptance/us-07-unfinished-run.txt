@@ -1,0 +1,22 @@
+scenario: us-07-unfinished-run
+  note: the run opened a journal marker and never closed it
+  note: unfinished run: 1dc536bc56f5
+  note: the trade it did make is intact; the run's completeness is not asserted
+
+Paper reconciliation — 2026-09-22T23:49:28.329833+00:00
+  reconciles          : True
+  evidence complete   : False
+  trades              : 1 (0 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 -48.7500 = 9951.2500   reserved=0.0000 available=9951.2500
+    [ok ] polymarket_us:USD      10000.0000 -39.4100 = 9960.5900   reserved=0.0000 available=9960.5900
+
+  trade/ledger integrity : sound
+    trades verified      : 1 (4 entr(ies) checked)
+
+  UNFINISHED RUNS     : 1 earlier run(s) ended without a clean shutdown
+    1dc536bc56f5
+      -> what they attempted is unknown; review them, then `event-arb acknowledge-run <id>`
+  leg-2 evidence      : {'unchanged_reread': 1}

@@ -1,0 +1,21 @@
+scenario: us-03-interruption-restart
+  note: leg 1 filled on Kalshi; the Polymarket US book read raised before leg 2
+  note: unhedged quantity carried across the restart: 100.00
+  note: a fresh process rebuilt the exposure rather than losing it
+
+Paper reconciliation — 2026-09-22T23:49:28.085349+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 1 (0 settled)
+  open unhedged qty   : 100.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 -48.7500 = 9951.2500   reserved=0.0000 available=9951.2500
+    [ok ] polymarket_us:USD      10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+
+  trade/ledger integrity : sound
+    trades verified      : 1 (2 entr(ies) checked)
+
+  open positions      : 1
+    7f4523ac-cb0b-409b-ad0c-88e46fc47fbb  kalshi:USD  100.00 @ 0.4700  (interrupted)
+  leg-2 evidence      : {'unchanged_reread': 1}

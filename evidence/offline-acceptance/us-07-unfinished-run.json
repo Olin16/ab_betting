@@ -1,0 +1,65 @@
+{
+  "generated_at": "2026-09-22T23:49:28.329833+00:00",
+  "reconciles": true,
+  "evidence_is_complete": false,
+  "accounts": [
+    {
+      "account": "kalshi:USD",
+      "opening": "10000.0000",
+      "trade_debits": "-47.0000",
+      "fee_debits": "-1.7500",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "-48.7500",
+      "ending": "9951.2500",
+      "reserved": "0.0000",
+      "available": "9951.2500",
+      "ledger_entries": 5,
+      "balances": true,
+      "check": "10000.0000 + -48.7500 = 9951.2500"
+    },
+    {
+      "account": "polymarket_us:USD",
+      "opening": "10000.0000",
+      "trade_debits": "-38.0000",
+      "fee_debits": "-1.4100",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "-39.4100",
+      "ending": "9960.5900",
+      "reserved": "0.0000",
+      "available": "9960.5900",
+      "ledger_entries": 5,
+      "balances": true,
+      "check": "10000.0000 + -39.4100 = 9960.5900"
+    }
+  ],
+  "trades": 1,
+  "settled_trades": 0,
+  "total_unhedged_quantity": "0.0000",
+  "open_positions": [],
+  "outstanding_holds": [],
+  "rejected_attempts": {},
+  "evidence": {
+    "unchanged_reread": 1
+  },
+  "invalidated_attempts": [],
+  "unfinished_runs": [
+    "1dc536bc56f5"
+  ],
+  "integrity": {
+    "is_sound": true,
+    "trades_verified": 1,
+    "trades_compacted": 0,
+    "entries_checked": 4,
+    "compaction_boundary": null,
+    "findings": []
+  },
+  "stop_causes": [],
+  "scenario": "us-07-unfinished-run",
+  "notes": [
+    "the run opened a journal marker and never closed it",
+    "unfinished run: 1dc536bc56f5",
+    "the trade it did make is intact; the run's completeness is not asserted"
+  ]
+}

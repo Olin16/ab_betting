@@ -1,0 +1,25 @@
+scenario: 03-storage-refuses-a-trade
+  note: the trade row write failed; the attempt was never published to the portfolio
+  note: invalidated attempts (in-process): 1
+  note: storage and memory agree: both hold no trade and the opening balances
+  note: the in-process run reported its own evidence as incomplete
+
+Paper reconciliation — 2026-09-22T23:49:27.437991+00:00
+  reconciles          : True
+  evidence complete   : False
+  trades              : 0 (0 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+    [ok ] polymarket_global:USDC 10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+
+  trade/ledger integrity : sound
+    trades verified      : 0 (0 entr(ies) checked)
+
+  INVALIDATED         : 1 attempt(s)
+    cd2661c1-7460-4ad8-8f4f-f95467b4be7f at leg1_checkpoint: disk is read-only
+      -> never published to the portfolio; absent from every balance, count and evidence grade the run reports
+
+  stop causes:
+    watchdog escalation pending

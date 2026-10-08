@@ -260,14 +260,14 @@ async def test_book_snapshots_are_recorded_and_pruned(
     settings = make_settings(fixture_dir)
     settings.trial.snapshot_retention_hours = 0
     scanner = await boot(settings, database)
-    books = await scanner.refresh_books()
-    await scanner.record_books(books)
+    refresh = await scanner.refresh_books()
+    await scanner.record_books(refresh.books)
 
     async with database.session() as session:
-        assert await OrderBookSnapshotRepository(session).count() == len(books)
+        assert await OrderBookSnapshotRepository(session).count() == len(refresh.books)
 
     removed = await scanner.prune_snapshots()
-    assert removed == len(books)
+    assert removed == len(refresh.books)
     async with database.session() as session:
         assert await OrderBookSnapshotRepository(session).count() == 0
 

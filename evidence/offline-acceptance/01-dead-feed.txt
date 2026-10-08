@@ -1,0 +1,20 @@
+scenario: 01-dead-feed
+  note: every refresh raised; the watchdog paused trading and then stopped the run
+  note: stopped_reason: 6 consecutive failures (refresh)
+  note: no trade was attempted against an unconfirmed book
+
+Paper reconciliation — 2026-09-22T23:49:27.265927+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 0 (0 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+    [ok ] polymarket_global:USDC 10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+
+  trade/ledger integrity : sound
+    trades verified      : 0 (0 entr(ies) checked)
+
+  stop causes:
+    6 consecutive failures (refresh)

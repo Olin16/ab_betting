@@ -1,0 +1,17 @@
+scenario: us-04-settlement-aligned
+  note: aligned outcomes: Kalshi YES and Polymarket US YES name the same result
+  note: credited: 100.0000
+
+Paper reconciliation — 2026-09-22T23:49:28.140461+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 1 (1 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 -48.7500 = 9951.2500   reserved=0.0000 available=9951.2500
+    [ok ] polymarket_us:USD      10000.0000 +60.5900 = 10060.5900   reserved=0.0000 available=10060.5900
+
+  trade/ledger integrity : sound
+    trades verified      : 1 (6 entr(ies) checked)
+  leg-2 evidence      : {'unchanged_reread': 1}

@@ -140,10 +140,27 @@
   If either venue edits its rules afterwards, the pair is automatically suspended.
   There is no acknowledgement override: a pair with an unapprovable reason above cannot be
   approved through this endpoint at all.</p>
-  <pre><code>curl -X POST localhost:8000/api/pairs/{{ pair.id }}/approve \
+{% if auth_required %}
+  <p class="muted">This deployment has <code>EVENT_ARB_API_AUTH_TOKEN</code> set, so the
+  approval endpoint requires a bearer token. Read it from the environment rather than
+  pasting it into a shell — a pasted token ends up in your shell history.</p>
+  <pre><code>set -a; . config/trial.env; set +a
+curl -fsS -X POST {{ api_base }}/api/pairs/{{ pair.id }}/approve \
+  -H "authorization: Bearer $EVENT_ARB_API_AUTH_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"approved_by":"you@example.com","reviewer_notes":"...",
        "kalshi_settlement_source":"","polymarket_settlement_source":""}'</code></pre>
+{% else %}
+  <p class="muted">This deployment has no API token set, which is permitted only on
+  loopback. A trial should set <code>EVENT_ARB_API_AUTH_TOKEN</code>; the command below
+  then also needs an <code>authorization: Bearer</code> header.</p>
+  <pre><code>curl -fsS -X POST {{ api_base }}/api/pairs/{{ pair.id }}/approve \
+  -H 'content-type: application/json' \
+  -d '{"approved_by":"you@example.com","reviewer_notes":"...",
+       "kalshi_settlement_source":"","polymarket_settlement_source":""}'</code></pre>
+{% endif %}
+  <p class="muted"><code>-fsS</code> is not decoration: without <code>-f</code>, curl exits
+  zero on a 401 or a 400, so a refused approval looks exactly like an accepted one.</p>
   <p class="muted">The settlement-source fields record an authoritative source you obtained
   outside the API. Supply them <strong>per leg</strong>: two unknown sources are two
   unknowns, not agreement.</p>

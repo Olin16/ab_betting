@@ -6,6 +6,7 @@ Commands:
 ``paper``    the above, plus a simulated two-leg execution for each opportunity
 ``serve``    run the dashboard
 ``pairs``    list candidate pairs with their rule differences
+``settle``   record a paper trade's real outcome and credit its payouts
 ``doctor``   print configuration and confirm the safety posture
 
 All commands default to fixture data and require no credentials or network access.
@@ -15,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import json
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -34,6 +37,8 @@ from event_arb.domain.keys import kalshi_key, market_key, pair_market_keys, poly
 from event_arb.domain.models import VenueMarket
 from event_arb.matching.approval import ApprovalError
 from event_arb.observability.logging import configure_logging, get_logger
+from event_arb.paper.journal import RunJournal
+from event_arb.paper.reconciliation import reconcile_accounts
 from event_arb.scanner import Scanner
 
 __all__ = ["main"]
@@ -274,10 +279,38 @@ async def _cmd_trial(settings: Settings, args: argparse.Namespace) -> int:
 
     from event_arb.alerts import AlertDispatcher
     from event_arb.persistence.database import Database
+    from event_arb.persistence.schema import ensure_schema
     from event_arb.runtime import TrialRunner
+    from event_arb.trial_preflight import run_preflight, run_static_preflight
+
+    live = settings.data_source is DataSource.LIVE
+    observation_only = args.observation_only or settings.trial.observation_only
+    if observation_only:
+        # Forced off in the settings the runner reads, not merely checked at the call
+        # site, so every path that consults auto_paper_trade agrees.
+        settings = settings.model_copy(
+            update={"trial": settings.trial.model_copy(update={"observation_only": True})}
+        )
 
     database = Database(settings.database_url)
-    await database.create_all()
+    # Creates a schema only when there is none. A populated database at an older revision
+    # is reported, not silently left half-migrated by create_all().
+    schema = await ensure_schema(database)
+    if schema.problem and live:
+        print(f"\n  DATABASE NOT READY: {schema.problem}")
+        await database.dispose()
+        return 1
+
+    # Before the first venue request, not after it. The scope check exists to stop a live
+    # run discovering a whole venue, so running it after discovery would refuse the run
+    # having already made the request it was refusing.
+    static = await run_static_preflight(settings, database, observation_only=observation_only)
+    print()
+    print(static.render())
+    if not static.passed:
+        await database.dispose()
+        return 1
+
     scanner = Scanner(settings, database=database)
 
     await scanner.discover()
@@ -288,16 +321,39 @@ async def _cmd_trial(settings: Settings, args: argparse.Namespace) -> int:
             print(f"    {pair.id[:12]}: {reason}")
     scanner.seed_watched_pairs()
     if not settings.trial.watched_pairs:
+        # Fixture demos may pair the whole corpus. A live run may not, and the preflight
+        # blocks before reaching here, so this can no longer widen a live trial's scope.
+        if live:
+            print("\n  refusing to generate pairs from discovery in a live trial")
+            await scanner.close()
+            return 1
         scanner.generate_pairs(min_score=Decimal("0.4"))
     await scanner.persist_markets()
     await scanner.persist_pairs()
 
-    approved = [p for p in scanner.state.pairs.values() if p.is_tradable_pair]
-    print(f"\n  watched pairs : {len(scanner.state.pairs)}")
-    print(f"  approved      : {len(approved)}")
-    if not approved:
-        print("  NOTE: no approved pairs. Only research candidates will be detected,")
-        print("        and none will be labeled arbitrage.")
+    preflight = await run_preflight(
+        scanner, settings, observation_only=observation_only, static=static
+    )
+    print()
+    print(preflight.render())
+    if not preflight.passed:
+        await scanner.close()
+        return 1
+
+    restored = scanner.last_portfolio_restore
+    if restored is not None:
+        print(f"\n  restored portfolio: {restored.as_dict()}")
+
+    # From here this process can attempt trades, so from here an abrupt death is
+    # unexplained. Only the clean shutdown in the `finally` below closes this marker;
+    # a kill, a crash or a host going away leaves it open for the next start to find.
+    run_id = scanner.begin_run(
+        mode="observation_only" if observation_only else "paper_trading",
+        data_source=settings.data_source.value,
+        duration_seconds=args.duration,
+    )
+    if run_id is not None:
+        print(f"  run id: {run_id} (journal: {scanner.journal.path})")  # type: ignore[union-attr]
 
     runner = TrialRunner(
         scanner,
@@ -315,13 +371,21 @@ async def _cmd_trial(settings: Settings, args: argparse.Namespace) -> int:
     print(f"\n  trial running; scanning every {settings.trial.scan_interval_seconds}s")
     print("  press Ctrl-C to stop\n")
 
+    interrupted = False
     try:
-        if args.duration:
-            await asyncio.sleep(args.duration)
-        else:
-            await asyncio.Event().wait()
+        # Wait for the *runner*, not merely for the clock. This used to sleep for the
+        # duration or block on an Event nothing ever set, so a watchdog stop or a dead
+        # background task left the process running to the end of its schedule and then
+        # exited zero — the one outcome that makes an unattended failure look like a
+        # completed run.
+        # `args.duration` of None means no deadline, which asyncio.timeout accepts
+        # directly — so a bounded run and an open-ended one take the same path.
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(args.duration):
+                await runner.wait_until_stopped()
     except (KeyboardInterrupt, asyncio.CancelledError):
-        pass
+        # An operator stopping the run is not a failure.
+        interrupted = True
     finally:
         await runner.stop()
         print("\n--- Trial summary ---")
@@ -331,8 +395,53 @@ async def _cmd_trial(settings: Settings, args: argparse.Namespace) -> int:
         print("\n--- Daily paper report ---")
         for key, value in report_daily.as_dict().items():
             print(f"  {key}: {value}")
+        # The arithmetic under the report. Printed unconditionally, because a rate is only
+        # worth reading once the accounts it came from are known to close.
+        causes = [c for c in (runner.stats.stopped_reason, runner.stats.last_error) if c]
+        reconciliation = reconcile_accounts(scanner.portfolio, causes)
+        print()
+        print(reconciliation.to_text())
+        if args.reconciliation_json:
+            destination = Path(args.reconciliation_json)
+            await asyncio.to_thread(
+                destination.write_text, json.dumps(reconciliation.as_dict(), indent=2) + "\n"
+            )
+            print(f"\n  reconciliation written: {destination}")
+        reconciled = reconciliation.reconciles and reconciliation.evidence_is_complete
+        # Closing the run marker is the last thing an orderly shutdown does. Reaching it
+        # is what distinguishes this run from one that was killed mid-attempt.
+        scanner.finish_run(
+            stopped_reason=runner.stats.stopped_reason,
+            interrupted=interrupted,
+            paper_trades=runner.stats.paper_trades,
+            reconciled=reconciled,
+        )
         await scanner.close()
-    return 0
+
+    if not reconciled:
+        # A run whose books do not close, or that lost an attempt to a failed write, has
+        # not produced evidence — whether or not its loops stayed healthy. The two causes
+        # are named separately because they call for different things: one is an
+        # arithmetic fault to investigate, the other a gap in the record to disclose.
+        print("\n  TRIAL EVIDENCE IS NOT USABLE")
+        if not reconciliation.reconciles:
+            print("    an account does not balance against its own ledger entries")
+        if not reconciliation.evidence_is_complete:
+            print(
+                f"    {len(reconciliation.invalidated)} attempt(s) could not be stored and "
+                "are counted in no balance, no total and no rate above"
+            )
+        print("    see docs/operations.md, 'Accounting durability'")
+        return 1
+    if interrupted or not runner.failed:
+        return 0
+    print("\n  TRIAL ENDED EARLY")
+    if runner.task_failed:
+        print(f"    a background task died: {runner.stats.last_error}")
+    if runner.stats.stopped_reason:
+        print(f"    reason: {runner.stats.stopped_reason}")
+    print("    the evidence above is incomplete; do not read it as a finished run")
+    return 1
 
 
 async def _cmd_candidates(settings: Settings, args: argparse.Namespace) -> int:
@@ -615,6 +724,261 @@ async def _cmd_doctor(settings: Settings, _args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_settle(settings: Settings, args: argparse.Namespace) -> int:
+    """Record the real outcome of a paper trade and credit its payouts.
+
+    Deliberately operator-driven. The outcome is entered by a named person alongside the
+    settlement authority they read, because an automatic outcome feed that is wrong, late,
+    or disagreeing between venues would silently rewrite the trial's own P&L — and a first
+    one-pair trial does not need that surface to reconcile a settlement.
+
+    Nothing here can place an order. It moves simulated cash in the local ledger only.
+    """
+    from event_arb.domain.enums import Outcome
+    from event_arb.paper.executor import SettlementOutcomes
+    from event_arb.paper.settlement import SettlementError
+    from event_arb.persistence.database import Database
+
+    _banner(settings)
+    database = Database(settings.database_url)
+    scanner = Scanner(settings, database=database)
+    try:
+        # Cash and history first. Crediting a payout into freshly-invented starting
+        # balances would be worse than not crediting it at all.
+        await scanner.restore_portfolio()
+
+        if args.list:
+            open_trades = scanner.unsettled_trades()
+            print(f"\n  {len(open_trades)} unsettled paper trade(s)\n")
+            for trade in open_trades:
+                print(
+                    f"    {trade.id}  pair={trade.pair_id[:12]}  "
+                    f"execution={trade.execution_status.value}  "
+                    f"hedged={trade.hedged_quantity}  unhedged={trade.unhedged_quantity}  "
+                    f"opened={trade.created_at.isoformat()}"
+                )
+            if not open_trades:
+                print("    (none)")
+            return 0
+
+        if not args.trade_id:
+            print("\n  --trade-id is required unless --list is given.")
+            return 1
+        if not args.recorded_by.strip():
+            print("\n  --recorded-by is required: a settlement is attributable or it is not")
+            print("  evidence. Name the person recording it.")
+            return 1
+        if not args.evidence.strip():
+            print("\n  --evidence is required: record the settlement authority and the")
+            print("  document you read, so the entry can be audited later.")
+            return 1
+
+        kalshi_outcome = Outcome(args.kalshi_outcome.upper())
+        polymarket_outcome = (
+            Outcome(args.polymarket_outcome.upper()) if args.polymarket_outcome else None
+        )
+        if polymarket_outcome is None:
+            # Derived through the reviewer-recorded inversion flag, never inferred from
+            # the titles. Pass --polymarket-outcome explicitly to record a genuine
+            # cross-venue settlement discrepancy.
+            known = next((t for t in scanner.portfolio.trades if t.id == args.trade_id), None)
+            # Read from storage, not from `scanner.state.pairs`: this command restores the
+            # portfolio and nothing else, so that map is always empty here. The lookup
+            # silently missed every time and the flag fell back to False, settling an
+            # inverted pair as though it were aligned — a wrong payout, with no symptom.
+            pair = await scanner.stored_pair(known.pair_id) if known else None
+            if pair is None and not args.outcomes_inverted:
+                print("\n  CANNOT ESTABLISH OUTCOME ALIGNMENT")
+                print(f"    no stored pair for trade {args.trade_id!r}, so whether Polymarket")
+                print("    YES corresponds to Kalshi YES is unknown. Assuming they align is")
+                print("    how an inverted pair gets paid the wrong way round, so this refuses.")
+                print("\n    Give the outcome explicitly with --polymarket-outcome YES|NO,")
+                print("    or state the inversion with --outcomes-inverted.")
+                return 1
+            inverted = bool(args.outcomes_inverted or (pair and pair.outcomes_inverted))
+            print(
+                f"  outcome alignment   : {'inverted' if inverted else 'aligned'} "
+                f"({'operator-stated' if args.outcomes_inverted else 'from the reviewed pair'})"
+            )
+            outcomes = SettlementOutcomes.for_event(
+                kalshi_outcome,
+                outcomes_inverted=inverted,
+                evidence=args.evidence,
+                recorded_by=args.recorded_by,
+            )
+        else:
+            outcomes = SettlementOutcomes(
+                kalshi=kalshi_outcome,
+                polymarket=polymarket_outcome,
+                evidence=args.evidence,
+                recorded_by=args.recorded_by,
+            )
+
+        print(f"\n  Kalshi resolves     : {outcomes.kalshi.value}")
+        print(f"  Polymarket resolves : {outcomes.polymarket.value}")
+        print(f"  recorded by         : {args.recorded_by}")
+        print(f"  evidence            : {args.evidence}")
+
+        if args.dry_run:
+            print("\n  DRY RUN: nothing was written.")
+            return 0
+
+        try:
+            record = await scanner.settle_paper_trade(args.trade_id, outcomes)
+        except SettlementError as exc:
+            print(f"\n  SETTLEMENT REFUSED: {exc}")
+            return 1
+
+        if record.already_settled:
+            print("\n  Already settled; no payout was credited a second time.")
+        print(f"\n  credited  : {record.credited}")
+        print(f"  final P&L : {record.final_pnl}")
+        print(f"  hedge held: {record.hedge_held}")
+        result = record.trade.settlement_result or {}
+        print(f"  payouts   : {result.get('payouts_by_account')}")
+        print(f"\n  balances  : {scanner.portfolio.balances}")
+        return 0
+    finally:
+        await scanner.close()
+
+
+async def _cmd_reconcile(settings: Settings, args: argparse.Namespace) -> int:
+    """Recompute every paper account from its stored ledger and check that it closes.
+
+    Read-only, and now actually so. It used to call ``restore_portfolio``, which reaps
+    holds left by a dead process and persists the release — so a command documented as
+    inspection wrote to the database, and running it against a *live* trial released the
+    reservations that trial was using. Recovery and reporting are separate operations,
+    and only one of them belongs in a command an operator runs to look at a number.
+
+    It re-derives each balance from the entries on disk, and independently checks each
+    retained trade's cash against the ledger that should hold it, so it answers the
+    question a running process cannot answer about itself: are the figures this trial
+    reported reproducible from storage?
+
+    Exits non-zero when they are not — an account does not balance, a trade's cash is
+    missing, the run recorded an attempt it could not store, or an earlier run died
+    without shutting down. Each means the evidence has a hole in it, and an acceptance
+    gate should fail rather than read the rates above it.
+    """
+    from event_arb.persistence.database import Database
+
+    _banner(settings)
+    database = Database(settings.database_url)
+    scanner = Scanner(settings, database=database)
+    try:
+        restored = await scanner.inspect_portfolio()
+        report = reconcile_accounts(scanner.portfolio)
+        if not restored.is_complete:
+            report.stop_causes.append(
+                f"portfolio restore incomplete: {len(restored.trades_unreadable)} stored "
+                "trade(s) could not be rebuilt, so exposure may be understated"
+            )
+        print()
+        print(report.to_text())
+        if args.json:
+            destination = Path(args.json)
+            await asyncio.to_thread(
+                destination.write_text, json.dumps(report.as_dict(), indent=2) + "\n"
+            )
+            print(f"\n  written: {destination}")
+        if not report.reconciles:
+            print("\n  ACCOUNTS DO NOT RECONCILE — do not read the figures above as a result")
+            return 1
+        if not report.evidence_is_complete:
+            print("\n  EVIDENCE INCOMPLETE — these figures do not cover everything that happened")
+            if report.invalidated:
+                print(f"    {len(report.invalidated)} attempt(s) storage never accepted")
+            if report.unfinished_runs:
+                print(
+                    f"    {len(report.unfinished_runs)} earlier run(s) ended without a clean "
+                    "shutdown; review, then `event-arb acknowledge-run <id>`"
+                )
+            if not report.integrity.is_sound:
+                print(
+                    f"    {len(report.integrity.findings)} trade(s) whose stored cash does "
+                    "not match what the trade implies"
+                )
+            return 1
+        if not restored.is_complete:
+            print("\n  RESTORE INCOMPLETE — some stored trades could not be rebuilt")
+            return 1
+        return 0
+    finally:
+        await scanner.close()
+
+
+async def _cmd_manifest(settings: Settings, args: argparse.Namespace) -> int:
+    """Hash the code and configuration this run would use, by content.
+
+    Replaces ``git status --porcelain | shasum -a 256``, which hashed a list of filenames
+    and status letters — identical for two trees whose uncommitted files differ in every
+    line. Most of this project's implementation is uncommitted, so that is the one case
+    it could not survive, and the case the evidence most needs it to.
+    """
+    from event_arb.manifest import build_manifest
+
+    _banner(settings)
+    manifest = await asyncio.to_thread(build_manifest, settings)
+    print()
+    print(manifest.render())
+    if args.json:
+        destination = Path(args.json)
+        await asyncio.to_thread(destination.write_text, manifest.to_json())
+        print(f"\n  written: {destination}")
+    return 0
+
+
+async def _cmd_acknowledge_run(settings: Settings, args: argparse.Namespace) -> int:
+    """Record an operator's review of a run that ended without a clean shutdown.
+
+    This is the only way the evidence gate stops blocking on a crashed run, and it works
+    by *appending* — the crash record stays in the journal forever, with this
+    acknowledgement beside it. Nothing is deleted, so the gate going green always leaves
+    behind a named person and a stated reason rather than a gap where a failure was.
+
+    Both ``--by`` and ``--note`` are required for that reason: an unattributed
+    acknowledgement would be indistinguishable from someone making the warning go away.
+    """
+    from event_arb.persistence.database import Database
+
+    _banner(settings)
+    if not args.by or not args.note:
+        print("\n  REFUSED: --by and --note are both required")
+        print("    acknowledging a crashed run is a claim that someone looked at it;")
+        print("    it is recorded permanently and must say who, and what they found")
+        return 1
+
+    database = Database(settings.database_url)
+    scanner = Scanner(settings, database=database)
+    try:
+        history = RunJournal.read(scanner.journal.path if scanner.journal else None)
+        unfinished = {run.run_id for run in history.unfinished}
+        if args.run_id not in unfinished:
+            print(f"\n  REFUSED: {args.run_id} is not an unfinished run in this journal")
+            if unfinished:
+                print(f"    unfinished runs: {', '.join(sorted(unfinished))}")
+            else:
+                print("    no run in this journal is unfinished")
+            return 1
+        if not scanner.acknowledge_run(args.run_id, by=args.by, note=args.note):
+            print("\n  FAILED: the acknowledgement could not be written to the journal")
+            return 1
+        print(f"\n  acknowledged run {args.run_id}")
+        print(f"    by   : {args.by}")
+        print(f"    note : {args.note}")
+        print(f"    the original failure record remains in {scanner.journal.path}")  # type: ignore[union-attr]
+        await scanner.audit(
+            args.by,
+            "run.acknowledged",
+            args.run_id,
+            {"note": args.note},
+        )
+        return 0
+    finally:
+        await scanner.close()
+
+
 async def _cmd_smoke_test(settings: Settings, args: argparse.Namespace) -> int:
     """Run the separately approved, public-REST-only schema smoke test."""
     from event_arb.smoke_test import SmokeTestError, run_supervised_smoke_test
@@ -671,8 +1035,73 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="authorize the exact five-row request plan printed after doctor",
     )
+    settle_cmd = subparsers.add_parser(
+        "settle",
+        help="record a paper trade's real outcome and credit its payouts (no real orders)",
+    )
+    settle_cmd.add_argument("--trade-id", default="", help="the paper trade's id")
+    settle_cmd.add_argument(
+        "--list", action="store_true", help="list unsettled paper trades and exit"
+    )
+    settle_cmd.add_argument(
+        "--kalshi-outcome",
+        default="YES",
+        choices=["YES", "NO", "yes", "no"],
+        help="the outcome that won on Kalshi",
+    )
+    settle_cmd.add_argument(
+        "--polymarket-outcome",
+        default="",
+        choices=["YES", "NO", "yes", "no", ""],
+        help=(
+            "the outcome that won on Polymarket. Omit to derive it from the pair's "
+            "reviewer-recorded inversion; pass it to record a genuine cross-venue "
+            "settlement discrepancy."
+        ),
+    )
+    settle_cmd.add_argument(
+        "--outcomes-inverted",
+        action="store_true",
+        help="treat Polymarket YES as Kalshi NO when the pair is not in local state",
+    )
+    settle_cmd.add_argument(
+        "--recorded-by", default="", help="the person recording this outcome (required)"
+    )
+    settle_cmd.add_argument(
+        "--evidence",
+        default="",
+        help="settlement authority and document consulted (required)",
+    )
+    settle_cmd.add_argument(
+        "--dry-run", action="store_true", help="print the resolution without writing"
+    )
+    reconcile_cmd = subparsers.add_parser(
+        "reconcile",
+        help="re-derive every paper account from the stored ledger and check it balances",
+    )
+    reconcile_cmd.add_argument("--json", default="", help="also write the full report to this path")
+    manifest_cmd = subparsers.add_parser(
+        "manifest",
+        help="hash the code and configuration by content, including untracked files",
+    )
+    manifest_cmd.add_argument(
+        "--json", default="", help="also write the full manifest to this path"
+    )
+    ack_cmd = subparsers.add_parser(
+        "acknowledge-run",
+        help="record that an operator reviewed an earlier run that died without "
+        "shutting down cleanly",
+    )
+    ack_cmd.add_argument("run_id", help="the unfinished run id, as `reconcile` prints it")
+    ack_cmd.add_argument("--by", default="", help="the person who reviewed it (required)")
+    ack_cmd.add_argument("--note", default="", help="what the review found (required)")
     trial = subparsers.add_parser(
         "trial", help="run the autonomous paper trial (ingest, scan, paper-execute)"
+    )
+    trial.add_argument(
+        "--reconciliation-json",
+        default="",
+        help="write the end-of-run account reconciliation to this path",
     )
     trial.add_argument(
         "--duration",
@@ -684,6 +1113,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--rest-only",
         action="store_true",
         help="poll REST only; do not open WebSocket connections",
+    )
+    trial.add_argument(
+        "--observation-only",
+        action="store_true",
+        help=(
+            "ingest and scan but execute no paper trade. An explicit mode: without it a "
+            "run with no approved pair is refused rather than quietly observing."
+        ),
     )
     candidates = subparsers.add_parser(
         "candidates", help="bounded candidate research (never approves or trades)"
@@ -774,6 +1211,10 @@ def main(argv: list[str] | None = None) -> int:
         "paper": _cmd_paper,
         "pairs": _cmd_pairs,
         "doctor": _cmd_doctor,
+        "settle": _cmd_settle,
+        "reconcile": _cmd_reconcile,
+        "acknowledge-run": _cmd_acknowledge_run,
+        "manifest": _cmd_manifest,
         "smoke-test": _cmd_smoke_test,
         "trial": _cmd_trial,
         "candidates": _cmd_candidates,

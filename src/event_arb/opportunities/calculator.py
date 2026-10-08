@@ -360,6 +360,7 @@ def calculate_direction(
 
     kalshi_leg = LegPlan(
         venue=Venue.KALSHI,
+        product=inputs.kalshi_market.product,
         market_id=inputs.kalshi_market.venue_market_id,
         outcome=kalshi_outcome,
         quantity=executable,
@@ -373,6 +374,7 @@ def calculate_direction(
     )
     polymarket_leg = LegPlan(
         venue=Venue.POLYMARKET,
+        product=inputs.polymarket_market.product,
         market_id=inputs.polymarket_market.venue_market_id,
         outcome=polymarket_outcome,
         quantity=executable,

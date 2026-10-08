@@ -16,6 +16,13 @@ keystore/
 *private*key*
 kalshi_*.pem
 polymarket_*.json
+# The runbook tells the operator to put an API auth token in this exact file. The
+# `.env.*` rule above does not cover it: gitignore matches that pattern against the
+# basename `trial.env`, which does not begin with `.env`. So name it exactly, and keep
+# the committed example beside it.
+config/trial.env
+config/*.env
+!config/*.env.example
 
 # ---- Python ----
 __pycache__/
@@ -36,6 +43,9 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+# The run journal is a sidecar beside the database — local run history, same as the
+# database itself, and `*.db` does not match `<name>.db.journal`.
+*.journal
 data/
 logs/
 *.log
@@ -53,3 +63,24 @@ graphify-out/
 .DS_Store
 .idea/
 .vscode/
+
+# Local files excluded from GitHub uploads
+.DS_Store
+.claude/
+.codex/
+.serena/
+graphify-out/
+node_modules/
+.venv/
+venv/
+__pycache__/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.db
+*.sqlite
+*.sqlite3
+*.journal

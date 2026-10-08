@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-09-22T23:49:27.437991+00:00",
+  "reconciles": true,
+  "evidence_is_complete": false,
+  "accounts": [
+    {
+      "account": "kalshi:USD",
+      "opening": "10000.0000",
+      "trade_debits": "0.0000",
+      "fee_debits": "0.0000",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "0.0000",
+      "ending": "10000.0000",
+      "reserved": "0.0000",
+      "available": "10000.0000",
+      "ledger_entries": 3,
+      "balances": true,
+      "check": "10000.0000 + 0.0000 = 10000.0000"
+    },
+    {
+      "account": "polymarket_global:USDC",
+      "opening": "10000.0000",
+      "trade_debits": "0.0000",
+      "fee_debits": "0.0000",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "0.0000",
+      "ending": "10000.0000",
+      "reserved": "0.0000",
+      "available": "10000.0000",
+      "ledger_entries": 3,
+      "balances": true,
+      "check": "10000.0000 + 0.0000 = 10000.0000"
+    }
+  ],
+  "trades": 0,
+  "settled_trades": 0,
+  "total_unhedged_quantity": "0.0000",
+  "open_positions": [],
+  "outstanding_holds": [],
+  "rejected_attempts": {},
+  "evidence": {},
+  "invalidated_attempts": [
+    {
+      "trade_id": "cd2661c1-7460-4ad8-8f4f-f95467b4be7f",
+      "pair_id": "ac353fc57d6fc91dfe3905f16918e2ab",
+      "stage": "leg1_checkpoint",
+      "execution_status": "leg1_filled",
+      "unhedged_quantity": "100.00",
+      "error": "disk is read-only",
+      "consequence": "never published to the portfolio; absent from every balance, count and evidence grade the run reports",
+      "at": "2026-09-22T23:49:27.425733+00:00"
+    }
+  ],
+  "unfinished_runs": [],
+  "integrity": {
+    "is_sound": true,
+    "trades_verified": 0,
+    "trades_compacted": 0,
+    "entries_checked": 0,
+    "compaction_boundary": null,
+    "findings": []
+  },
+  "stop_causes": [
+    "watchdog escalation pending"
+  ],
+  "scenario": "03-storage-refuses-a-trade",
+  "notes": [
+    "the trade row write failed; the attempt was never published to the portfolio",
+    "invalidated attempts (in-process): 1",
+    "storage and memory agree: both hold no trade and the opening balances",
+    "the in-process run reported its own evidence as incomplete"
+  ]
+}

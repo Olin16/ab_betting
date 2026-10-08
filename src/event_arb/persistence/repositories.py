@@ -39,6 +39,7 @@ from event_arb.persistence.models import (
     MarketPairRow,
     OpportunityRow,
     OrderBookSnapshotRow,
+    PaperLedgerEntryRow,
     PaperTradeRow,
     VenueMarketRow,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "MarketPairRepository",
     "OpportunityRepository",
     "OrderBookSnapshotRepository",
+    "PaperLedgerRepository",
     "PaperTradeRepository",
     "VenueMarketRepository",
 ]
@@ -318,33 +320,58 @@ class PaperTradeRepository:
         self._session = session
 
     async def record(self, trade: Any) -> None:
-        """Persist a :class:`~event_arb.paper.executor.PaperTrade`."""
+        """Persist a :class:`~event_arb.paper.executor.PaperTrade`, keyed by its own id.
+
+        An **upsert**, not an insert. The same trade reaches here more than once by
+        design — settlement rewrites it, and a restarted loop may finish work it had
+        already persisted — and a second row would double the exposure that restore
+        reconstructs.
+        """
         payload = trade.as_dict()
-        self._session.add(
-            PaperTradeRow(
-                pair_id=trade.pair_id,
-                direction=trade.direction.value,
-                status=trade.status.value,
-                opportunity_snapshot=_json_safe(trade.opportunity.model_dump(mode="json")),
-                orders=_json_safe(payload),
-                realized_pnl=trade.realized_pnl_if_hedged,
-                unhedged_quantity=trade.unhedged_quantity,
-                settlement_result=_json_safe(trade.settlement_result)
-                if trade.settlement_result
-                else None,
-                created_at=trade.created_at,
-                settled_at=trade.settled_at,
-            )
+        existing = await self._session.scalar(
+            select(PaperTradeRow).where(PaperTradeRow.trade_id == trade.id)
         )
+        row = existing or PaperTradeRow(trade_id=trade.id)
+        row.pair_id = trade.pair_id
+        row.direction = trade.direction.value
+        row.status = trade.status.value
+        row.execution_status = trade.execution_status.value
+        row.opportunity_snapshot = _json_safe(trade.opportunity.model_dump(mode="json"))
+        row.orders = _json_safe(payload)
+        row.realized_pnl = trade.realized_pnl_if_hedged
+        row.unhedged_quantity = trade.unhedged_quantity
+        row.settlement_result = (
+            _json_safe(trade.settlement_result) if trade.settlement_result else None
+        )
+        row.created_at = trade.created_at
+        row.settled_at = trade.settled_at
+        if existing is None:
+            self._session.add(row)
 
     async def prune(self, older_than: timedelta, now: datetime | None = None) -> int:
-        """Delete simulated trades beyond the retention window. Returns rows removed."""
+        """Delete aged trades whose positions are **resolved**. Returns rows removed.
+
+        Retention used to delete purely by age. That removed the record of positions that
+        were still open — a leg-2 failure sitting unhedged for longer than the window
+        vanished from the exposure report while the money stayed spent. A trade is only
+        prunable once it has settled and carries no unhedged remainder; anything else is
+        kept regardless of age, because it is still a live position.
+
+        Cash is unaffected either way: balances come from the ledger, which is compacted
+        rather than deleted. See :meth:`PaperLedgerRepository.compact`.
+        """
         cutoff = (now or datetime.now(UTC)) - older_than
-        stale = (
+        candidates = (
             await self._session.scalars(
-                select(PaperTradeRow.id).where(PaperTradeRow.created_at < cutoff)
+                select(PaperTradeRow).where(
+                    PaperTradeRow.created_at < cutoff,
+                    PaperTradeRow.settled_at.is_not(None),
+                )
             )
         ).all()
+        # Compared as a Decimal, not as stored text: "0", "0.00" and "0.0000" are the
+        # same number and a SQL string comparison would keep or drop rows by formatting.
+        stale = [row.id for row in candidates if row.unhedged_quantity == Decimal("0")]
         if not stale:
             return 0
         await self._session.execute(delete(PaperTradeRow).where(PaperTradeRow.id.in_(stale)))
@@ -357,8 +384,156 @@ class PaperTradeRepository:
             )
         ).all()
 
+    async def load_all(self, limit: int | None = None) -> Sequence[PaperTradeRow]:
+        """Every stored trade, oldest first, for portfolio reconstruction."""
+        statement = select(PaperTradeRow).order_by(PaperTradeRow.created_at.asc())
+        if limit is not None:
+            statement = statement.limit(limit)
+        return (await self._session.scalars(statement)).all()
+
+    async def get(self, trade_id: str) -> PaperTradeRow | None:
+        row: PaperTradeRow | None = await self._session.scalar(
+            select(PaperTradeRow).where(PaperTradeRow.trade_id == trade_id)
+        )
+        return row
+
+    async def open_trades(self) -> Sequence[PaperTradeRow]:
+        """Trades with no recorded settlement — the ones an operator has to settle."""
+        return (
+            await self._session.scalars(
+                select(PaperTradeRow)
+                .where(PaperTradeRow.settled_at.is_(None))
+                .order_by(PaperTradeRow.created_at.asc())
+            )
+        ).all()
+
     async def count(self) -> int:
         return len((await self._session.scalars(select(PaperTradeRow.id))).all())
+
+
+# --------------------------------------------------------------------- paper ledger
+
+
+class PaperLedgerRepository:
+    """Durable store for the append-only cash ledger.
+
+    Writes are keyed by the entry's own deterministic id, so persisting the same movement
+    twice is a no-op rather than a double debit — the same property the in-memory ledger
+    has, held at the storage boundary too.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def record_many(self, entries: Iterable[Any]) -> int:
+        """Persist ledger entries, skipping ones already stored. Returns how many landed."""
+        written = 0
+        for entry in entries:
+            existing = await self._session.get(PaperLedgerEntryRow, entry.entry_id)
+            if existing is not None:
+                continue
+            self._session.add(
+                PaperLedgerEntryRow(
+                    entry_id=entry.entry_id,
+                    account=entry.account.key,
+                    kind=entry.kind.value,
+                    amount=entry.amount,
+                    trade_id=entry.trade_id,
+                    detail=entry.detail,
+                    created_at=entry.created_at,
+                )
+            )
+            written += 1
+        return written
+
+    async def load_all(self) -> list[Any]:
+        """Every stored entry, oldest first, as domain :class:`LedgerEntry` objects."""
+        from event_arb.paper.accounts import AccountId
+        from event_arb.paper.ledger import EntryKind, LedgerEntry
+
+        rows = (
+            await self._session.scalars(
+                select(PaperLedgerEntryRow).order_by(PaperLedgerEntryRow.created_at.asc())
+            )
+        ).all()
+        return [
+            LedgerEntry(
+                entry_id=row.entry_id,
+                account=AccountId.parse(row.account),
+                kind=EntryKind(row.kind),
+                amount=row.amount,
+                trade_id=row.trade_id,
+                detail=row.detail,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+    async def compact(
+        self,
+        older_than: timedelta,
+        keep_trade_ids: frozenset[str],
+        now: datetime | None = None,
+    ) -> int:
+        """Bound the ledger **without changing a balance**. Returns entries removed.
+
+        Aged entries are summed per account and replaced by one carry-forward row, so the
+        derived balance is identical before and after. Entries belonging to
+        ``keep_trade_ids`` — trades whose position is still open — and reservation entries
+        are never compacted: the first because their detail reconstructs live exposure,
+        the second because a hold and its release are a matched pair.
+        """
+        from event_arb.paper.accounts import AccountId
+        from event_arb.paper.ledger import EntryKind
+
+        cutoff = (now or datetime.now(UTC)) - older_than
+        reservation_kinds = {EntryKind.RESERVATION.value, EntryKind.RELEASE.value}
+        rows = (
+            await self._session.scalars(
+                select(PaperLedgerEntryRow).where(PaperLedgerEntryRow.created_at < cutoff)
+            )
+        ).all()
+        removable = [
+            row
+            for row in rows
+            if row.kind not in reservation_kinds
+            and row.kind != EntryKind.CARRY_FORWARD.value
+            and (not row.trade_id or row.trade_id not in keep_trade_ids)
+        ]
+        if not removable:
+            return 0
+
+        carried: dict[str, Decimal] = {}
+        for row in removable:
+            carried[row.account] = carried.get(row.account, Decimal("0")) + row.amount
+        await self._session.execute(
+            delete(PaperLedgerEntryRow).where(
+                PaperLedgerEntryRow.entry_id.in_([row.entry_id for row in removable])
+            )
+        )
+        stamp = cutoff.isoformat()
+        for account_key, amount in sorted(carried.items()):
+            AccountId.parse(account_key)
+            entry_id = f"carry:{stamp}:{account_key}"
+            existing = await self._session.get(PaperLedgerEntryRow, entry_id)
+            if existing is not None:
+                existing.amount = existing.amount + amount
+                continue
+            self._session.add(
+                PaperLedgerEntryRow(
+                    entry_id=entry_id,
+                    account=account_key,
+                    kind=EntryKind.CARRY_FORWARD.value,
+                    amount=amount,
+                    trade_id="",
+                    detail=f"net of {len(removable)} ledger entries pruned before {stamp}",
+                    created_at=cutoff,
+                )
+            )
+        return len(removable)
+
+    async def count(self) -> int:
+        return len((await self._session.scalars(select(PaperLedgerEntryRow.entry_id))).all())
 
 
 # ------------------------------------------------------------------------ order books

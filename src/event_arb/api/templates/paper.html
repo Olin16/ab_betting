@@ -5,15 +5,18 @@
 <div class="grid2">
   <div class="panel">
     <table>
-      {% for asset, amount in portfolio.balances.items() %}
-      <tr><th>{{ asset }} balance</th><td class="num">{{ amount }}</td></tr>
+      {% for account, amount in portfolio.balances.items() %}
+      <tr><th>{{ account }}</th><td class="num">{{ amount }}</td></tr>
       {% endfor %}
+      <tr><th>Open notional</th><td class="num">${{ portfolio.open_notional }}</td></tr>
       <tr><th>Open unhedged qty</th>
           <td class="num {% if portfolio.total_unhedged_quantity > 0 %}bad{% endif %}">
             {{ portfolio.total_unhedged_quantity }}</td></tr>
     </table>
-    <p class="muted">USD and USDC are tracked separately: they are distinct assets with
-    conversion and depeg risk between them.</p>
+    <p class="muted">Balances are per <em>account</em> — venue, product and asset. Kalshi
+    USD and Polymarket US USD are both dollars and are not the same money: moving between
+    them is a withdrawal and a deposit, not a transfer. USD and USDC are distinct again,
+    with conversion and depeg risk between them.</p>
   </div>
   <div class="panel">
     <table>
@@ -22,29 +25,35 @@
       <tr><th>Partially hedged</th><td class="num warn">{{ report.partially_hedged }}</td></tr>
       <tr><th>Leg-2 failures</th><td class="num bad">{{ report.leg2_failures }}</td></tr>
       <tr><th>Hedge success rate</th><td class="num">{{ report.hedge_success_rate }}%</td></tr>
-      <tr><th>Realized P&amp;L</th><td class="num">${{ report.total_pnl }}</td></tr>
+      <tr><th>Execution P&amp;L estimate</th>
+          <td class="num">${{ report.execution_pnl_estimate }}</td></tr>
+      <tr><th>Settled P&amp;L (today)</th><td class="num">${{ report.settled_pnl }}</td></tr>
+      <tr><th>Settled trades (today)</th><td class="num">{{ report.settled_trades }}</td></tr>
       <tr><th>Detected profit</th><td class="num muted">${{ report.detected_profit }}</td></tr>
       <tr><th>Realization rate</th><td class="num">{{ report.realization_rate }}%</td></tr>
     </table>
+    <p class="muted">Trades opened today drive the execution counters; settled P&amp;L
+    counts trades settled today whenever they were opened. They are different sets of
+    trades on purpose — an execution estimate is not cash.</p>
   </div>
 </div>
 
 <h2>Open unhedged exposure</h2>
 <table>
   <thead><tr>
-    <th>Trade</th><th>Pair</th><th>Venue</th><th>Outcome</th>
-    <th class="num">Qty</th><th class="num">Cost basis</th><th>Status</th>
+    <th>Trade</th><th>Pair</th><th>Account</th><th>Outcome</th>
+    <th class="num">Qty</th><th class="num">Cost basis</th><th>Execution</th>
   </tr></thead>
   <tbody>
   {% for e in exposure %}
     <tr>
       <td><code>{{ e.trade_id[:8] }}</code></td>
       <td><code>{{ e.pair_id[:10] }}</code></td>
-      <td class="bad">{{ e.venue }}</td>
+      <td class="bad">{{ e.account }}</td>
       <td>{{ e.outcome }}</td>
       <td class="num">{{ e.quantity }}</td>
       <td class="num">{{ e.cost_basis }}</td>
-      <td>{{ e.status }}</td>
+      <td>{{ e.execution_status }}</td>
     </tr>
   {% else %}
     <tr><td colspan="7" class="good">No unhedged exposure.</td></tr>
@@ -55,7 +64,7 @@
 <h2>Simulated trades</h2>
 <table>
   <thead><tr>
-    <th>ID</th><th>Status</th><th class="num">Hedged</th><th class="num">Unhedged</th>
+    <th>ID</th><th>Execution</th><th>Settled</th><th class="num">Hedged</th><th class="num">Unhedged</th>
     <th class="num">Cost</th><th class="num">Fees</th><th class="num">P&amp;L</th>
     <th class="num">Detected</th><th class="num">Slippage</th><th>Notes</th>
   </tr></thead>
@@ -63,7 +72,9 @@
   {% for t in trades %}
     <tr>
       <td><code>{{ t.id[:8] }}</code></td>
-      <td>{{ t.status.value }}</td>
+      <td>{{ t.execution_status.value }}</td>
+      <td class="{% if t.is_settled %}good{% else %}muted{% endif %}">
+        {{ 'yes' if t.is_settled else 'open' }}</td>
       <td class="num">{{ t.hedged_quantity }}</td>
       <td class="num {% if t.unhedged_quantity > 0 %}bad{% endif %}">{{ t.unhedged_quantity }}</td>
       <td class="num">${{ t.total_cost }}</td>
@@ -74,7 +85,7 @@
       <td class="muted">{{ t.notes | join('; ') }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="10" class="muted">No paper trades yet.</td></tr>
+    <tr><td colspan="11" class="muted">No paper trades yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>

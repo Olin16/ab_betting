@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-09-22T23:49:27.525691+00:00",
+  "reconciles": true,
+  "evidence_is_complete": true,
+  "accounts": [
+    {
+      "account": "kalshi:USD",
+      "opening": "40.0000",
+      "trade_debits": "0.0000",
+      "fee_debits": "0.0000",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "0.0000",
+      "ending": "40.0000",
+      "reserved": "0.0000",
+      "available": "40.0000",
+      "ledger_entries": 1,
+      "balances": true,
+      "check": "40.0000 + 0.0000 = 40.0000"
+    },
+    {
+      "account": "polymarket_global:USDC",
+      "opening": "40.0000",
+      "trade_debits": "0.0000",
+      "fee_debits": "0.0000",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "0.0000",
+      "ending": "40.0000",
+      "reserved": "0.0000",
+      "available": "40.0000",
+      "ledger_entries": 1,
+      "balances": true,
+      "check": "40.0000 + 0.0000 = 40.0000"
+    }
+  ],
+  "trades": 0,
+  "settled_trades": 0,
+  "total_unhedged_quantity": "0.0000",
+  "open_positions": [],
+  "outstanding_holds": [],
+  "rejected_attempts": {},
+  "evidence": {},
+  "invalidated_attempts": [],
+  "unfinished_runs": [],
+  "integrity": {
+    "is_sound": true,
+    "trades_verified": 0,
+    "trades_compacted": 0,
+    "entries_checked": 0,
+    "compaction_boundary": null,
+    "findings": []
+  },
+  "stop_causes": [],
+  "scenario": "04-capital-depletion",
+  "notes": [
+    "accounts opened at 40.00; the capital gate refused every attempt",
+    "refusals (in-process): 3",
+    "a rising refusal count is not a quiet market, and the report says which"
+  ]
+}

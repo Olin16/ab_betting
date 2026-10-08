@@ -1,0 +1,64 @@
+{
+  "generated_at": "2026-09-22T23:49:27.697455+00:00",
+  "reconciles": true,
+  "evidence_is_complete": true,
+  "accounts": [
+    {
+      "account": "kalshi:USD",
+      "opening": "10000.0000",
+      "trade_debits": "-55.0000",
+      "fee_debits": "-1.7400",
+      "settlement_credits": "100.0000",
+      "carried_forward": "0.0000",
+      "movements": "43.2600",
+      "ending": "10043.2600",
+      "reserved": "0.0000",
+      "available": "10043.2600",
+      "ledger_entries": 6,
+      "balances": true,
+      "check": "10000.0000 + 43.2600 = 10043.2600"
+    },
+    {
+      "account": "polymarket_global:USDC",
+      "opening": "10000.0000",
+      "trade_debits": "-38.0000",
+      "fee_debits": "-0.9424",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "-38.9424",
+      "ending": "9961.0576",
+      "reserved": "0.0000",
+      "available": "9961.0576",
+      "ledger_entries": 6,
+      "balances": true,
+      "check": "10000.0000 + -38.9424 = 9961.0576"
+    }
+  ],
+  "trades": 1,
+  "settled_trades": 1,
+  "total_unhedged_quantity": "0.0000",
+  "open_positions": [],
+  "outstanding_holds": [],
+  "rejected_attempts": {},
+  "evidence": {
+    "unchanged_reread": 1
+  },
+  "invalidated_attempts": [],
+  "unfinished_runs": [],
+  "integrity": {
+    "is_sound": true,
+    "trades_verified": 1,
+    "trades_compacted": 0,
+    "entries_checked": 6,
+    "compaction_boundary": null,
+    "findings": []
+  },
+  "stop_causes": [],
+  "scenario": "07-settlement-failure-and-restart",
+  "notes": [
+    "the settlement write failed and the run recorded the divergence",
+    "the restart found the trade unsettled, which is storage being authoritative",
+    "settling again credited the payout; settling a third time credited nothing",
+    "credited balances: {'kalshi:USD': '10043.2600', 'polymarket_global:USDC': '9961.0576'}"
+  ]
+}

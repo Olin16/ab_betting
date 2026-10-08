@@ -21,8 +21,11 @@ from event_arb.config import (
     TrialSettings,
 )
 from event_arb.demo_reviews import load_recorded_reviews
+from event_arb.domain.enums import Outcome, PaperTradeStatus
+from event_arb.paper.executor import SettlementOutcomes
 from event_arb.persistence.database import Database
 from event_arb.persistence.models import OpportunityRow, PaperTradeRow
+from event_arb.persistence.repositories import PaperTradeRepository
 from event_arb.scanner import Scanner
 
 pytestmark = pytest.mark.anyio
@@ -101,22 +104,106 @@ async def test_recent_detections_survive_pruning(fixture_dir: Path, database: Da
     assert await _count(database, OpportunityRow) == before
 
 
-async def test_old_paper_trades_are_pruned(fixture_dir: Path, database: Database) -> None:
-    settings = _settings(fixture_dir, paper_trade_retention_days=30)
-    scanner = await _approved_scanner(settings, database)
-    result = await scanner.scan_and_persist()
-    await scanner.paper_trade(result.confirmed[0], simulate_latency=False)
-    assert await _count(database, PaperTradeRow) == 1
-
+async def _age_trades(database: Database, days: int = 400) -> None:
     from sqlalchemy import update
 
     async with database.session() as session:
         await session.execute(
-            update(PaperTradeRow).values(created_at=datetime.now(UTC) - timedelta(days=400))
+            update(PaperTradeRow).values(created_at=datetime.now(UTC) - timedelta(days=days))
         )
+
+
+async def test_old_settled_paper_trades_are_pruned(fixture_dir: Path, database: Database) -> None:
+    """A resolved trade past the window is history, and history is bounded."""
+    settings = _settings(fixture_dir, paper_trade_retention_days=30)
+    scanner = await _approved_scanner(settings, database)
+    result = await scanner.scan_and_persist()
+    trade = await scanner.paper_trade(result.confirmed[0], simulate_latency=False)
+    assert await _count(database, PaperTradeRow) == 1
+
+    await scanner.settle_paper_trade(
+        trade.id,
+        SettlementOutcomes.for_event(
+            Outcome.YES, evidence="fixture settlement", recorded_by="test"
+        ),
+    )
+    assert trade.unhedged_quantity == Decimal("0")
+    await _age_trades(database)
 
     await scanner.prune_snapshots()
     assert await _count(database, PaperTradeRow) == 0
+
+
+async def test_retention_keeps_an_unresolved_position_however_old_it_is(
+    fixture_dir: Path, database: Database
+) -> None:
+    """An open position is not history, and deleting it would hide live exposure.
+
+    Retention used to delete by age alone, so a leg-2 failure that stayed unhedged for
+    longer than the window vanished from the exposure report while the money it had spent
+    stayed spent. Age is now necessary but not sufficient: a trade must also be settled
+    and carry no unhedged remainder.
+    """
+    settings = _settings(fixture_dir, paper_trade_retention_days=30)
+    scanner = await _approved_scanner(settings, database)
+    result = await scanner.scan_and_persist()
+    trade = await scanner.paper_trade(result.confirmed[0], simulate_latency=False)
+    # Force the open, unhedged shape this test is about.
+    trade.leg2 = None
+    trade.set_execution_status(PaperTradeStatus.LEG2_FAILED)
+    async with database.session() as session:
+        await PaperTradeRepository(session).record(trade)
+    await _age_trades(database)
+
+    removed = await scanner.prune_snapshots()
+
+    assert await _count(database, PaperTradeRow) == 1, (
+        "an unhedged, unsettled trade must survive retention: it is a live position"
+    )
+    assert trade.unhedged_quantity > Decimal("0")
+    assert removed >= 0
+
+
+async def test_pruning_history_never_moves_a_balance(fixture_dir: Path, database: Database) -> None:
+    """Retention compacts the ledger rather than deleting from it.
+
+    Balances are derived from ledger entries, so deleting aged entries outright would
+    change a balance as a side effect of bounding a table. Compaction replaces them with
+    one carry-forward per account, which is exactly cash-neutral.
+    """
+    settings = _settings(fixture_dir, paper_trade_retention_days=30)
+    scanner = await _approved_scanner(settings, database)
+    result = await scanner.scan_and_persist()
+    trade = await scanner.paper_trade(result.confirmed[0], simulate_latency=False)
+    await scanner.settle_paper_trade(
+        trade.id,
+        SettlementOutcomes.for_event(
+            Outcome.YES, evidence="fixture settlement", recorded_by="test"
+        ),
+    )
+    before = dict(scanner.portfolio.balances)
+
+    await _age_ledger(database)
+    await _age_trades(database)
+    await scanner.prune_snapshots()
+
+    assert dict(scanner.portfolio.balances) == before
+
+    # And the same balance is what a fresh process reads back.
+    reopened = Scanner(settings, database=database)
+    await reopened.restore_portfolio()
+    assert dict(reopened.portfolio.balances) == before
+
+
+async def _age_ledger(database: Database, days: int = 400) -> None:
+    from sqlalchemy import update
+
+    from event_arb.persistence.models import PaperLedgerEntryRow
+
+    async with database.session() as session:
+        await session.execute(
+            update(PaperLedgerEntryRow).values(created_at=datetime.now(UTC) - timedelta(days=days))
+        )
 
 
 async def test_a_suppressed_detection_keeps_its_economics_but_not_the_blob(

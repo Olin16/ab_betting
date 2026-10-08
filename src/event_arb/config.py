@@ -19,6 +19,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from event_arb.domain.enums import SettlementAsset
+
 __all__ = [
     "AlertSettings",
     "DataSource",
@@ -176,6 +178,11 @@ class TrialSettings(BaseModel):
     scan_interval_seconds: float = 5.0
     #: Automatically paper-trade confirmed opportunities as they are detected.
     auto_paper_trade: bool = True
+    #: Run the ingest/scan loops but execute nothing. An explicit mode, because a run that
+    #: observes because it was told to is evidence, while a run that observes because its
+    #: configuration was wrong is a silent failure with the same output. Setting it forces
+    #: ``auto_paper_trade`` off and relaxes the preflight's approved-pair requirement.
+    observation_only: bool = False
     #: Also paper-trade unapproved research candidates (evidence only; never a real trade).
     paper_trade_research_candidates: bool = False
     #: Delete stored order-book snapshots older than this. Bounded retention is required
@@ -196,9 +203,27 @@ class TrialSettings(BaseModel):
     #: Fallback per-request estimate used only before any refresh has been observed.
     assumed_request_seconds: float = 0.4
 
+    #: Consecutive refresh or storage failures tolerated before paper trading pauses.
+    #: A trial that keeps executing against books it could not confirm is manufacturing
+    #: evidence rather than collecting it.
+    pause_after_consecutive_failures: int = 3
+    #: Consecutive failures after which the trial stops rather than pausing. An unattended
+    #: run that has been failing for this long is not going to recover on its own, and
+    #: every further cycle spends rate-limit budget to record nothing.
+    stop_after_consecutive_failures: int = 12
+    #: Seconds between adapter health checks. Kept separate from the maintenance interval:
+    #: health checks used to share the 300 s retention loop, which cannot notice the
+    #: one-minute degraded-feed stop condition operations documents.
+    health_check_interval_seconds: float = 30.0
+
     @property
     def is_configured(self) -> bool:
         return bool(self.watched_pairs)
+
+    @property
+    def trades_automatically(self) -> bool:
+        """Whether this configuration will execute anything at all."""
+        return self.auto_paper_trade and not self.observation_only
 
     @property
     def cycle_interval_seconds(self) -> float:
@@ -252,8 +277,70 @@ class PaperSettings(BaseModel):
     #: uncalibrated adverse rate is a guess, and a guess that flatters the strategy is
     #: indistinguishable from evidence once it reaches a report.
     leg2_adverse_model_source: str = ""
+    #: Per-asset starting balance, applied **to each account in that asset**. See
+    #: :meth:`starting_balance_for` for why this is not a pool to be divided.
     starting_usd_balance: Decimal = Decimal("10000")
     starting_usdc_balance: Decimal = Decimal("10000")
+    #: Explicit per-account starting balances, keyed as ``kalshi:USD``,
+    #: ``polymarket_us:USD``, ``polymarket_global:USDC``. Anything named here wins over
+    #: the per-asset settings above; anything absent falls back to them.
+    starting_balances: dict[str, Decimal] = Field(default_factory=dict)
+
+    #: Largest gross acquisition cost one simulated trade may commit, across both legs.
+    max_trade_notional: Decimal = Decimal("500")
+    #: Largest total cost basis that may be committed to open (unsettled) trades at once.
+    max_open_notional: Decimal = Decimal("2000")
+    #: Contracts that may sit unhedged across all open trades before new trades are
+    #: refused. A failed second leg leaves naked directional exposure; without a ceiling,
+    #: automated paper trading accumulates it indefinitely and the trial measures a
+    #: strategy nobody would run.
+    max_open_unhedged_quantity: Decimal = Decimal("200")
+    #: Cash each account must retain. A trade that would take an account below this is
+    #: refused rather than sized down.
+    min_account_balance: Decimal = Decimal("0")
+
+    @field_validator(
+        "max_trade_notional",
+        "max_open_notional",
+        "max_open_unhedged_quantity",
+        "min_account_balance",
+    )
+    @classmethod
+    def _limits_non_negative(cls, v: Decimal) -> Decimal:
+        if v < 0:
+            raise ValueError("paper limits must be non-negative")
+        return v
+
+    @field_validator("starting_balances")
+    @classmethod
+    def _validated_account_keys(cls, v: dict[str, Decimal]) -> dict[str, Decimal]:
+        from event_arb.paper.accounts import AccountId
+
+        for key, amount in v.items():
+            AccountId.parse(key)
+            if amount < 0:
+                raise ValueError(f"starting balance for {key!r} must not be negative")
+        return v
+
+    def starting_balance_for(self, account_key: str, asset: SettlementAsset) -> Decimal:
+        """The opening balance for one account.
+
+        **Compatibility policy for the pooled settings.** ``starting_usd_balance`` and
+        ``starting_usdc_balance`` predate per-account balances, when the simulator kept
+        one number per asset. A US trial has *two* USD accounts — Kalshi and Polymarket
+        US — and there is no way to know how a previously pooled figure was meant to be
+        split between them. Rather than invent a split, the per-asset setting is read as
+        "the starting balance of **each** account in this asset". That is stated here, in
+        ``.env.example`` and in ``docs/operations.md``, and it is deliberately not silent:
+        a trial that cares about the distinction sets ``starting_balances`` per account,
+        which always wins.
+        """
+        explicit = self.starting_balances.get(account_key)
+        if explicit is not None:
+            return explicit
+        if asset is SettlementAsset.USDC:
+            return self.starting_usdc_balance
+        return self.starting_usd_balance
 
     @model_validator(mode="after")
     def validate_adverse_model(self) -> PaperSettings:
@@ -303,6 +390,21 @@ class Settings(BaseSettings):
     #: the operator has taken responsibility for reachability; it is not a way to skip
     #: authentication on a genuinely reachable interface.
     api_bind_is_externally_restricted: bool = False
+    #: Serve the dashboard for *review only*: no trial may start from it, whatever the
+    #: trial settings say.
+    #:
+    #: A pair is approved through the dashboard, and the example trial configuration
+    #: enables the trial — so restarting ``serve`` to do a review, against a database
+    #: where a pair is already approved, would start paper trading as a side effect of
+    #: looking at it. Worse, an operator who leaves the CLI trial running and opens the
+    #: dashboard to watch it gets a *second* runner against the same database.
+    #:
+    #: This is a separate switch rather than "just don't enable the trial" because the
+    #: two mean different things to an operator: one is a configuration they must
+    #: remember to change back, the other is a mode they are deliberately in. The static
+    #: scope and schema checks still run — review-only narrows what may happen, and is
+    #: not an excuse to stop checking.
+    review_only: bool = False
 
     data_source: DataSource = DataSource.FIXTURE
     #: Default REST polling: it needs no credentials on either venue. WebSocket ingestion

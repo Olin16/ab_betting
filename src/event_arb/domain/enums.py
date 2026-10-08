@@ -160,6 +160,11 @@ class RejectionReason(StrEnum):
     NEGATIVE_AFTER_FEES = "negative_after_fees"
     CROSSED_OR_INVALID_PRICES = "crossed_or_invalid_prices"
     COOLDOWN_ACTIVE = "cooldown_active"
+    #: The simulated accounts could not fund the trade. Distinct from a detection
+    #: rejection: the opportunity was real and was refused at the capital gate.
+    INSUFFICIENT_PAPER_FUNDS = "insufficient_paper_funds"
+    #: A configured paper position, notional or unhedged-exposure limit refused it.
+    PAPER_LIMIT_EXCEEDED = "paper_limit_exceeded"
 
 
 class PaperTradeStatus(StrEnum):
@@ -168,6 +173,12 @@ class PaperTradeStatus(StrEnum):
     BOTH_LEGS_FILLED = "both_legs_filled"
     PARTIALLY_HEDGED = "partially_hedged"
     LEG2_FAILED = "leg2_failed"
+    #: Leg 1 filled and the process was interrupted before leg 2 was attempted at all.
+    #: Distinct from ``LEG2_FAILED``, which means the hedge *was* attempted and the book
+    #: was unusable — that is evidence about hedging. This is the absence of evidence: the
+    #: exposure is real and must be carried, but the attempt says nothing about whether
+    #: the hedge would have held, so it is excluded from fill-quality statistics.
+    INTERRUPTED = "interrupted"
     SETTLED = "settled"
 
 

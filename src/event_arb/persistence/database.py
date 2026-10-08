@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import StaticPool
 
 from event_arb.persistence.models import Base
 
@@ -19,10 +20,27 @@ __all__ = ["Database", "build_engine"]
 
 
 def build_engine(database_url: str, echo: bool = False) -> AsyncEngine:
-    """Create the async engine, ensuring the SQLite parent directory exists."""
+    """Create the async engine, ensuring the SQLite parent directory exists.
+
+    In-memory SQLite additionally gets :class:`StaticPool`. Each connection to
+    ``:memory:`` opens its **own** empty database, so with the default pool a second
+    concurrent connection sees no tables at all — the schema was created on the first one.
+    Serial callers never noticed; the trial's concurrent loops do, and the symptom is a
+    bewildering "no such table" against a database that was demonstrably created. Pinning
+    one connection makes ``:memory:`` mean one database, which is what every caller
+    already assumed.
+    """
     if database_url.startswith("sqlite") and ":memory:" not in database_url:
         path_part = database_url.split("///", 1)[-1]
         Path(path_part).parent.mkdir(parents=True, exist_ok=True)
+    if database_url.startswith("sqlite") and ":memory:" in database_url:
+        return create_async_engine(
+            database_url,
+            echo=echo,
+            future=True,
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
     return create_async_engine(database_url, echo=echo, future=True)
 
 
@@ -54,7 +72,11 @@ class Database:
             try:
                 yield session
                 await session.commit()
-            except Exception:
+            except BaseException:
+                # BaseException, not Exception: a cancellation arriving mid-transaction
+                # left the session un-rolled-back, and an aiosqlite connection returned
+                # to the pool with an open transaction is invalid — which surfaced as a
+                # later query finding an empty database rather than as an error here.
                 await session.rollback()
                 raise
 

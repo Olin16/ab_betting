@@ -1,0 +1,17 @@
+scenario: 04-capital-depletion
+  note: accounts opened at 40.00; the capital gate refused every attempt
+  note: refusals (in-process): 3
+  note: a rising refusal count is not a quiet market, and the report says which
+
+Paper reconciliation — 2026-09-22T23:49:27.525691+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 0 (0 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             40.0000 +0.0000 = 40.0000   reserved=0.0000 available=40.0000
+    [ok ] polymarket_global:USDC 40.0000 +0.0000 = 40.0000   reserved=0.0000 available=40.0000
+
+  trade/ledger integrity : sound
+    trades verified      : 0 (0 entr(ies) checked)

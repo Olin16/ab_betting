@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     TypeDecorator,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -35,6 +36,7 @@ __all__ = [
     "MarketPairRow",
     "OpportunityRow",
     "OrderBookSnapshotRow",
+    "PaperLedgerEntryRow",
     "PaperTradeRow",
     "SportsbookMappingRow",
     "SportsbookQuoteRow",
@@ -233,11 +235,35 @@ class OpportunityRow(Base):
 
 class PaperTradeRow(Base):
     __tablename__ = "paper_trades"
+    __table_args__ = (
+        # The simulator's own uuid, not the surrogate key. Recording the same trade twice
+        # — a retry, a replay, a restarted loop finishing what it started — must produce
+        # one row, or restore counts the exposure twice.
+        #
+        # Partial, because rows migrated from before this column existed keep an empty
+        # ``trade_id`` when their stored payload carried no id, and more than one of those
+        # must not collide. A full constraint would make the migration fail on exactly the
+        # historical data it exists to carry forward.
+        Index(
+            "uq_paper_trade_id",
+            "trade_id",
+            unique=True,
+            sqlite_where=text("trade_id != ''"),
+            postgresql_where=text("trade_id != ''"),
+        ),
+        Index("ix_paper_trades_created_at", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: Stable identity assigned at execution. Rows written before this column existed
+    #: carry their uuid inside ``orders``; the migration backfills from there.
+    trade_id: Mapped[str] = mapped_column(String(64), default="")
     pair_id: Mapped[str] = mapped_column(String(64))
     direction: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32))
+    #: How execution ended, kept apart from ``status`` so recording a settlement does not
+    #: erase the fill classification the hedge-success rate is computed from.
+    execution_status: Mapped[str] = mapped_column(String(32), default="")
     opportunity_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     orders: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     realized_pnl: Mapped[Decimal] = mapped_column(DecimalString, default=Decimal("0"))
@@ -245,6 +271,31 @@ class PaperTradeRow(Base):
     settlement_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
     settled_at: Mapped[datetime | None] = mapped_column(UtcDateTime())
+
+
+class PaperLedgerEntryRow(Base):
+    """One movement of, or hold on, simulated cash.
+
+    This table, not ``paper_trades``, is what a balance is reconstructed from. Keeping a
+    running total in a column would make a balance unverifiable and would not survive a
+    process that died between debiting cash and writing the trade. Entries are keyed by a
+    deterministic ``entry_id`` so replaying them is idempotent.
+
+    Retention compacts this table rather than deleting from it: pruned entries are
+    replaced by one carry-forward per account, so bounding history cannot change a
+    balance. See :meth:`event_arb.paper.ledger.PaperLedger.compact_before`.
+    """
+
+    __tablename__ = "paper_ledger_entries"
+    __table_args__ = (Index("ix_paper_ledger_created_at", "created_at"),)
+
+    entry_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    account: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(32))
+    amount: Mapped[Decimal] = mapped_column(DecimalString)
+    trade_id: Mapped[str] = mapped_column(String(64), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_utcnow)
 
 
 class SportsbookQuoteRow(Base):

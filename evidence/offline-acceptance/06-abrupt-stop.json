@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-09-22T23:49:27.617182+00:00",
+  "reconciles": true,
+  "evidence_is_complete": true,
+  "accounts": [
+    {
+      "account": "kalshi:USD",
+      "opening": "10000.0000",
+      "trade_debits": "-55.0000",
+      "fee_debits": "-1.7400",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "-56.7400",
+      "ending": "9943.2600",
+      "reserved": "0.0000",
+      "available": "9943.2600",
+      "ledger_entries": 5,
+      "balances": true,
+      "check": "10000.0000 + -56.7400 = 9943.2600"
+    },
+    {
+      "account": "polymarket_global:USDC",
+      "opening": "10000.0000",
+      "trade_debits": "0.0000",
+      "fee_debits": "0.0000",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "0.0000",
+      "ending": "10000.0000",
+      "reserved": "0.0000",
+      "available": "10000.0000",
+      "ledger_entries": 3,
+      "balances": true,
+      "check": "10000.0000 + 0.0000 = 10000.0000"
+    }
+  ],
+  "trades": 1,
+  "settled_trades": 0,
+  "total_unhedged_quantity": "100.0000",
+  "open_positions": [
+    {
+      "trade_id": "614fa520-d820-4239-9dc8-f8d2cd768d77",
+      "pair_id": "ac353fc57d6fc91dfe3905f16918e2ab",
+      "venue": "KALSHI",
+      "account": "kalshi:USD",
+      "outcome": "YES",
+      "quantity": "100.00",
+      "cost_basis": "0.5500",
+      "status": "leg1_filled",
+      "execution_status": "leg1_filled"
+    }
+  ],
+  "outstanding_holds": [],
+  "rejected_attempts": {},
+  "evidence": {
+    "unchanged_reread": 1
+  },
+  "invalidated_attempts": [],
+  "unfinished_runs": [],
+  "integrity": {
+    "is_sound": true,
+    "trades_verified": 1,
+    "trades_compacted": 0,
+    "entries_checked": 2,
+    "compaction_boundary": null,
+    "findings": []
+  },
+  "stop_causes": [],
+  "scenario": "06-abrupt-stop",
+  "notes": [
+    "the interruption handler was disabled, standing in for a killed process",
+    "the leg-1 checkpoint written before leg 2 is what the restart reads",
+    "limitation: a death before that checkpoint leaves no record \u2014 correctly, because an unstored simulated fill also reached no venue"
+  ]
+}

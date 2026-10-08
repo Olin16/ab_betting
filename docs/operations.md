@@ -21,7 +21,20 @@ cp .env.example .env
 .venv/bin/event-arb pairs     # candidate pairs with rule differences
 .venv/bin/event-arb paper     # scan + simulated two-leg execution
 .venv/bin/event-arb serve     # dashboard on 127.0.0.1:8000
+.venv/bin/event-arb reconcile # re-derive every paper account from the stored ledger
+.venv/bin/event-arb manifest  # content hash of the code and config a run would use
+.venv/bin/event-arb acknowledge-run <id> --by … --note …   # clear an unfinished run
 ```
+
+`serve` will start a trial when the trial settings enable one. Set
+`EVENT_ARB_REVIEW_ONLY=1` to serve the dashboard for review and approval only — it cannot
+start a runner whatever the trial configuration says, which is what you want when a CLI
+trial is already running or when you are opening the dashboard just to approve a pair.
+
+For a supervised live-**data** paper trial, do not use `.env`: it is the fixture-default
+development configuration. Copy `config/trial.env.example` and follow
+[the runbook](paper-trial-runbook.md), which pins a dedicated database, an explicitly
+named pair, finite limits, and the reporting procedure.
 
 ### Seeing the pipeline end to end
 
@@ -138,6 +151,59 @@ leg 2 the same book the opportunity was detected against, which makes hedge fail
 impossible by construction and produces a 100% hedge rate that means nothing. In streaming
 mode the store is already being updated, so no extra request is issued.
 
+### Accounting durability
+
+Nothing is published to the in-memory portfolio until storage has accepted it. That is the
+whole policy, and `src/event_arb/paper/durability.py` states why: a paper portfolio is only
+meaningful because it can be reconstructed, so a balance that exists solely in a live
+process is a number that disappears at the next restart while the report still calls the
+run clean.
+
+What follows from it, operationally:
+
+- A trade whose write fails is **invalidated**, not retried into memory. It appears in no
+  balance, no count and no rate, and the run stops — a run that cannot write its own
+  accounting has nothing left to observe. `event_arb_paper_trades_invalidated_total` and
+  `TrialStats.paper_trades_invalidated` count them; the daily report's `evidence_caveat`
+  says the record has a hole in it.
+- Leg 1's exposure is written **before** leg 2 is attempted, so an abrupt stop between the
+  legs is recovered at the next start as open exposure with status `leg1_filled`.
+- An operator Ctrl-C between the legs is stored and then re-raised as a cancellation, so an
+  orderly stop is not counted as an execution failure and exits 0.
+- Settlement is the one place memory may lead storage: the credit is idempotent and
+  repeating the command converges. A failed settlement write is recorded as a divergence,
+  and a restart before the retry correctly shows the trade unsettled.
+
+- An invalidated attempt is written to an append-only journal **beside** the database
+  rather than into it — the attempt is invalidated because the database refused it, so a
+  record that needed that database would be the same silence with more steps. A restart
+  therefore still reports the hole instead of upgrading the run to complete.
+- A run opens a marker in that journal and only an orderly shutdown closes it, so a process
+  killed outright is visible to the next one as an **unfinished run**. Clear it with
+  `event-arb acknowledge-run <id> --by … --note …`, which appends; the crash record is
+  never removed.
+
+Verify a run with `event-arb reconcile`. It answers two independent questions:
+
+1. **Does each account's arithmetic close?** `opening + movements == ending`, per account —
+   never in aggregate, because a USD gain and a USDC loss net to nothing meaningful, and
+   Kalshi USD and Polymarket US USD are both `USD` without being the same money.
+2. **Is each retained trade's cash actually in the ledger?** The first check cannot answer
+   this: both of its sides sum the same ledger, so deleting a trade's debits removes them
+   from both at once and the identity still holds while the cash reappears. Each retained
+   trade's implied entries are re-derived from the trade rows — stored separately from the
+   ledger — and missing, wrong-amount, wrong-account, unexpected and orphaned movements are
+   named. Retention compaction is recognised by the boundary its carry-forward entries
+   record, and reported as *not verified* rather than as corruption.
+
+`reconcile` is **read-only**. It does not reap stale holds, which means it is safe to run
+against a database a trial is currently using; recovery happens only at the start of a run.
+
+It exits non-zero when an account does not close, when a trade's cash is missing, when a
+stored trade could not be rebuilt, when an attempt was invalidated, or when an earlier run
+died without shutting down. **A non-zero exit means the run's figures are not evidence**,
+whatever the hedge rate above them says.
+
 ## Monitoring
 
 `/health` — adapter connectivity, freshness, reconnects, sequence gaps, and
@@ -155,6 +221,7 @@ mode the store is already being updated, so no extra request is issued.
 | `event_arb_paper_trades_total{status="leg2_failed"}` | the risk that matters most |
 | `event_arb_paper_refetches_total` | paper traffic against the rate-limit budget |
 | `event_arb_paper_trade_evidence_total{grade="measured"}` | should be ~all trades; see below |
+| `event_arb_paper_trades_invalidated_total` | **any value above zero**: an attempt the run could not store, so it is counted nowhere else |
 
 ### Setting max_book_age_ms
 
@@ -198,9 +265,17 @@ from evidence once it reaches a report. Trades run under it are graded `modelled
 
 ## Dashboard exposure
 
-The dashboard has **no authentication** and binds to `127.0.0.1` by default. The JSON API
-includes a state-changing, unauthenticated approval endpoint. Do not expose it to a
-network without an authenticating reverse proxy.
+The dashboard binds to `127.0.0.1` by default. State-changing routes — `POST /api/scan`
+and `POST /api/pairs/{id}/approve` — require a bearer token when
+`EVENT_ARB_API_AUTH_TOKEN` is set, compared in constant time. Read-only health and metrics
+stay open so monitoring does not need the token.
+
+The token is **optional on loopback and mandatory off it**: binding to a non-loopback
+interface without one fails at startup rather than quietly publishing the approval
+endpoint. Set one for any trial anyway — approval is the single route that changes what
+the trial is allowed to trade. There is still no CSRF protection on the state-changing
+routes, so do not expose the dashboard to a network without an authenticating proxy in
+front of it.
 
 ---
 

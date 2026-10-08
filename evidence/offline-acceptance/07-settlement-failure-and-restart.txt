@@ -1,0 +1,19 @@
+scenario: 07-settlement-failure-and-restart
+  note: the settlement write failed and the run recorded the divergence
+  note: the restart found the trade unsettled, which is storage being authoritative
+  note: settling again credited the payout; settling a third time credited nothing
+  note: credited balances: {'kalshi:USD': '10043.2600', 'polymarket_global:USDC': '9961.0576'}
+
+Paper reconciliation — 2026-09-22T23:49:27.697455+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 1 (1 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 +43.2600 = 10043.2600   reserved=0.0000 available=10043.2600
+    [ok ] polymarket_global:USDC 10000.0000 -38.9424 = 9961.0576   reserved=0.0000 available=9961.0576
+
+  trade/ledger integrity : sound
+    trades verified      : 1 (6 entr(ies) checked)
+  leg-2 evidence      : {'unchanged_reread': 1}

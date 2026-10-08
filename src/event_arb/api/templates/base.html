@@ -62,6 +62,16 @@
         is not atomic.
       </span>
     </div>
+    {% if settings.review_only %}
+    <div class="panel banner">
+      <strong class="warn">Review only.</strong>
+      <span class="muted">
+        <code>EVENT_ARB_REVIEW_ONLY</code> is set: this dashboard will not start a trial,
+        whatever the trial configuration says. Pairs can still be reviewed and approved.
+        Start the trial deliberately, from the CLI, when you intend to.
+      </span>
+    </div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>

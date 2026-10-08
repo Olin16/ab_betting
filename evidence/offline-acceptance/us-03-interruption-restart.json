@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-09-22T23:49:28.085349+00:00",
+  "reconciles": true,
+  "evidence_is_complete": true,
+  "accounts": [
+    {
+      "account": "kalshi:USD",
+      "opening": "10000.0000",
+      "trade_debits": "-47.0000",
+      "fee_debits": "-1.7500",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "-48.7500",
+      "ending": "9951.2500",
+      "reserved": "0.0000",
+      "available": "9951.2500",
+      "ledger_entries": 5,
+      "balances": true,
+      "check": "10000.0000 + -48.7500 = 9951.2500"
+    },
+    {
+      "account": "polymarket_us:USD",
+      "opening": "10000.0000",
+      "trade_debits": "0.0000",
+      "fee_debits": "0.0000",
+      "settlement_credits": "0.0000",
+      "carried_forward": "0.0000",
+      "movements": "0.0000",
+      "ending": "10000.0000",
+      "reserved": "0.0000",
+      "available": "10000.0000",
+      "ledger_entries": 3,
+      "balances": true,
+      "check": "10000.0000 + 0.0000 = 10000.0000"
+    }
+  ],
+  "trades": 1,
+  "settled_trades": 0,
+  "total_unhedged_quantity": "100.0000",
+  "open_positions": [
+    {
+      "trade_id": "7f4523ac-cb0b-409b-ad0c-88e46fc47fbb",
+      "pair_id": "d5f6f54fb36b5b012218d80db697f6a8",
+      "venue": "KALSHI",
+      "account": "kalshi:USD",
+      "outcome": "NO",
+      "quantity": "100.00",
+      "cost_basis": "0.4700",
+      "status": "interrupted",
+      "execution_status": "interrupted"
+    }
+  ],
+  "outstanding_holds": [],
+  "rejected_attempts": {},
+  "evidence": {
+    "unchanged_reread": 1
+  },
+  "invalidated_attempts": [],
+  "unfinished_runs": [],
+  "integrity": {
+    "is_sound": true,
+    "trades_verified": 1,
+    "trades_compacted": 0,
+    "entries_checked": 2,
+    "compaction_boundary": null,
+    "findings": []
+  },
+  "stop_causes": [],
+  "scenario": "us-03-interruption-restart",
+  "notes": [
+    "leg 1 filled on Kalshi; the Polymarket US book read raised before leg 2",
+    "unhedged quantity carried across the restart: 100.00",
+    "a fresh process rebuilt the exposure rather than losing it"
+  ]
+}

@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.templating import Jinja2Templates
 
 from event_arb.alerts import AlertDispatcher
-from event_arb.config import IngestionMode, Settings, get_settings
+from event_arb.config import DataSource, IngestionMode, Settings, get_settings
 from event_arb.domain.keys import pair_market_keys
 from event_arb.domain.models import ReviewedSource
 from event_arb.matching.readiness import assess_readiness
@@ -29,8 +29,10 @@ from event_arb.matching.rules_diff import compare_rules
 from event_arb.observability import metrics
 from event_arb.observability.logging import configure_logging, get_logger
 from event_arb.persistence.database import Database
+from event_arb.persistence.schema import ensure_schema
 from event_arb.runtime import TrialRunner
 from event_arb.scanner import Scanner
+from event_arb.trial_preflight import PreflightReport, run_preflight, run_static_preflight
 
 __all__ = ["create_app"]
 
@@ -93,7 +95,30 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
         trial: TrialRunner | None = None
         try:
             if runtime.database is not None:
-                await runtime.database.create_all()
+                # Creates a schema only where there is none; an existing one at an older
+                # revision is reported by the preflight rather than half-migrated here.
+                await ensure_schema(runtime.database)
+            # The same gate the CLI runs, in the same place: before the first venue
+            # request. The dashboard used to discover, generate pairs from whatever came
+            # back, and only then consult a preflight whose whole purpose was to prevent
+            # that. Its result is now what decides whether startup may proceed.
+            app.state.static_preflight = await run_static_preflight(
+                config, runtime.database, observation_only=config.trial.observation_only
+            )
+            # Review-only is included deliberately. It stops a *trial* from starting; it
+            # does not make an out-of-scope configuration safe, and the scope check is
+            # precisely what stands between a live review session and the venue-wide
+            # `GET /markets` that `runtime.discover()` below would otherwise issue.
+            if (config.trial.enabled or config.review_only) and not (
+                app.state.static_preflight.passed
+            ):
+                log.error(
+                    "app.startup.preflight_failed",
+                    note="serving read-only; no discovery, no pair generation, no trial",
+                    **app.state.static_preflight.as_dict(),
+                )
+                yield
+                return
             await runtime.discover()
             # Restore before seeding so stored approvals are re-verified against current
             # rules; a rules change while we were down must suspend, not reinstate.
@@ -103,7 +128,17 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             # Pairs must exist before books are refreshed: the refresh is scoped to the
             # markets those pairs reference, so refreshing first would target nothing.
             runtime.seed_watched_pairs()
-            runtime.generate_pairs()
+            if config.data_source is DataSource.LIVE and not config.trial.watched_pairs:
+                # The CLI already refuses this; the dashboard used to do it silently.
+                # With no watched scope, discovery returned the whole catalogue, so
+                # generating pairs from it invents candidates nobody asked to watch.
+                log.warning(
+                    "app.startup.pair_generation_skipped",
+                    note="live data with no trial.watched_pairs; discovery scope is "
+                    "unbounded, so no pairs are generated from it",
+                )
+            else:
+                runtime.generate_pairs()
             await runtime.persist_markets()
             await runtime.persist_pairs()
             await runtime.refresh_books()
@@ -122,21 +157,52 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             await runtime.close()
 
     async def _start_trial(app: FastAPI, runtime: Scanner, config: Settings) -> TrialRunner | None:
-        if config.trial.enabled:
-            trial = TrialRunner(
-                runtime,
-                config,
-                alerts=AlertDispatcher(config.alerts),
-                # Honour the explicit ingestion mode. Deriving this from "are we live?"
-                # was wrong: both venues require an authenticated WebSocket handshake
-                # even for public market data, so going live must not silently start a
-                # stream that cannot authenticate.
-                use_websockets=config.ingestion_mode is IngestionMode.WEBSOCKET,
+        """Start the dashboard's trial through the **same** preflight the CLI uses.
+
+        The two entry points used to enforce different rules: `event-arb trial` at least
+        printed a note about unapproved pairs, while the dashboard started a live trial on
+        whatever configuration it was handed. A gate only one caller passes through is not
+        a gate, so both now run :func:`run_preflight` and both fail closed.
+        """
+        if config.review_only:
+            # Checked before `trial.enabled`, and deliberately not expressed as "turn the
+            # trial off": an operator reviewing a pair should not have to remember to
+            # edit the trial configuration, and must not start a second runner against a
+            # database a CLI trial already owns.
+            log.warning(
+                "app.trial.review_only",
+                note="EVENT_ARB_REVIEW_ONLY is set; the dashboard serves review and "
+                "approval only, and will not start a trial",
             )
-            app.state.trial = trial
-            await trial.start()
-            return trial
-        return None
+            app.state.review_only = True
+            return None
+        preflight = await run_preflight(
+            runtime,
+            config,
+            observation_only=config.trial.observation_only,
+            static=getattr(app.state, "static_preflight", None),
+        )
+        app.state.preflight = preflight
+        if not preflight.passed:
+            log.error(
+                "app.trial.preflight_failed",
+                note="the dashboard is serving read-only; no trial was started",
+                **preflight.as_dict(),
+            )
+            return None
+        trial = TrialRunner(
+            runtime,
+            config,
+            alerts=AlertDispatcher(config.alerts),
+            # Honour the explicit ingestion mode. Deriving this from "are we live?"
+            # was wrong: both venues require an authenticated WebSocket handshake
+            # even for public market data, so going live must not silently start a
+            # stream that cannot authenticate.
+            use_websockets=config.ingestion_mode is IngestionMode.WEBSOCKET,
+        )
+        app.state.trial = trial
+        await trial.start()
+        return trial
 
     app = FastAPI(
         lifespan=lifespan,
@@ -149,6 +215,7 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
     )
     app.state.scanner = runtime
     app.state.trial = None
+    app.state.preflight = None
     app.state.settings = config
 
     # ------------------------------------------------------------------ operational
@@ -227,6 +294,13 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
             ),
             kalshi_book=runtime.store.get(kalshi_k),
             polymarket_book=runtime.store.get(polymarket_k),
+            # The approval command shown on this page has to be the one that works. With
+            # a token configured — which the runbook recommends for any trial — the
+            # unauthenticated curl it used to print returns 401, so an operator's first
+            # attempt at the only human gate in the system failed for a reason the page
+            # did not mention.
+            auth_required=bool(config.api_auth_token.get_secret_value()),
+            api_base=f"http://{config.api_host}:{config.api_port}",
         )
 
     @app.get("/opportunities", response_class=HTMLResponse)
@@ -278,8 +352,8 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
 
     @app.post("/api/scan", response_class=JSONResponse, dependencies=[auth])
     async def api_scan() -> dict[str, Any]:
-        books = await runtime.refresh_books()
-        await runtime.record_books(books)
+        refresh = await runtime.refresh_books()
+        await runtime.record_books(refresh.books)
         result = await runtime.scan_and_persist()
         return {
             "scanned_at": result.scanned_at.isoformat(),
@@ -329,9 +403,41 @@ def create_app(settings: Settings | None = None, scanner: Scanner | None = None)
     async def trial_status() -> dict[str, Any]:
         """Live trial counters: scans, detections, paper trades, errors."""
         active: TrialRunner | None = app.state.trial
+        preflight: PreflightReport | None = app.state.preflight
         if active is None:
+            if preflight is not None and not preflight.passed:
+                # Say *why* nothing is running. "Not running" and "refused to start"
+                # look identical from a counter, and only one of them needs fixing.
+                return {
+                    "running": False,
+                    "reason": "trial preflight failed; nothing was started",
+                    "preflight": preflight.as_dict(),
+                }
             return {"running": False, "reason": "trial.enabled is false"}
-        return active.status()
+        return {**active.status(), "preflight": preflight.as_dict() if preflight else None}
+
+    @app.get("/api/preflight", response_class=JSONResponse)
+    async def preflight_status() -> dict[str, Any]:
+        """What the trial preflight found at startup, block by block."""
+        preflight: PreflightReport | None = app.state.preflight
+        if preflight is None:
+            return {"ran": False, "reason": "trial.enabled is false"}
+        return {"ran": True, **preflight.as_dict()}
+
+    @app.get("/api/paper/portfolio", response_class=JSONResponse)
+    async def paper_portfolio() -> dict[str, Any]:
+        """Per-account simulated balances, open exposure, and today's report."""
+        return {
+            "accounts": runtime.portfolio.ledger.as_dict(),
+            "balances_by_asset": runtime.portfolio.balances_by_asset,
+            "open_notional": str(runtime.portfolio.open_notional),
+            "open_exposure": runtime.portfolio.open_exposure(),
+            "unsettled_trades": len(runtime.unsettled_trades()),
+            "daily_report": runtime.portfolio.daily_report().as_dict(),
+            "restore": (
+                runtime.last_portfolio_restore.as_dict() if runtime.last_portfolio_restore else None
+            ),
+        }
 
     @app.get("/api/trading-status", response_class=JSONResponse)
     async def trading_status() -> dict[str, Any]:

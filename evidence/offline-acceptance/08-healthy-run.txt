@@ -1,0 +1,18 @@
+scenario: 08-healthy-run
+  note: no failure injected; the assembled runtime traded against fixture books
+  note: trial stats: {'started_at': '2026-09-22T23:49:27.732761+00:00', 'uptime_seconds': 0, 'scans': 2, 'opportunities_detected': 2, 'confirmed_detected': 2, 'paper_trades': 2, 'refreshes': 2, 'refreshes_incomplete': 0, 'feed_was_healthy': True, 'snapshots_pruned': 0, 'alerts_suppressed': 0, 'errors': 0, 'health_alerts': 0, 'paper_trades_refused': 0, 'paper_trades_invalidated': 0, 'accounting_is_reproducible': True, 'trading_paused': False, 'trading_paused_cycles': 0, 'paused_reason': None, 'stopped_reason': None, 'consecutive_failures': 0, 'consecutive_failures_by_loop': {}, 'last_scan_at': '2026-09-22T23:49:27.773508+00:00', 'last_error': None}
+  note: leg-2 evidence is unchanged_reread throughout: a fixture book cannot move, so nothing here is evidence about hedging under adverse movement
+
+Paper reconciliation — 2026-09-22T23:49:27.797226+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 2 (0 settled)
+  open unhedged qty   : 0.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 -113.4800 = 9886.5200   reserved=0.0000 available=9886.5200
+    [ok ] polymarket_global:USDC 10000.0000 -77.8848 = 9922.1152   reserved=0.0000 available=9922.1152
+
+  trade/ledger integrity : sound
+    trades verified      : 2 (8 entr(ies) checked)
+  leg-2 evidence      : {'unchanged_reread': 2}

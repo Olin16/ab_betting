@@ -117,7 +117,9 @@ one later grows a `POST`.
 | [market-matching.md](docs/market-matching.md) | Why title similarity is not equivalence |
 | [risk-model.md](docs/risk-model.md) | Execution risks that survive a "perfect" spread |
 | [threat-model.md](docs/threat-model.md) | Credentials, keys, logs, dependencies |
-| [operations.md](docs/operations.md) | Running it, retention, alerts, live-trading checklist |
+| [operations.md](docs/operations.md) | Running it, retention, alerts, accounting durability, live-trading checklist |
+| [paper-trial-runbook.md](docs/paper-trial-runbook.md) | The supervised REST-only paper trial, end to end |
+| [live-trial-launch-package.md](docs/live-trial-launch-package.md) | What an operator reviews before authorizing that trial |
 
 ## Security
 

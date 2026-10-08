@@ -1,0 +1,2 @@
+fresh US trial database migrated cleanly
+  revision: 6b2f1c9a7d40

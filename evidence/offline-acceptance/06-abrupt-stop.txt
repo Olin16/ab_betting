@@ -1,0 +1,21 @@
+scenario: 06-abrupt-stop
+  note: the interruption handler was disabled, standing in for a killed process
+  note: the leg-1 checkpoint written before leg 2 is what the restart reads
+  note: limitation: a death before that checkpoint leaves no record — correctly, because an unstored simulated fill also reached no venue
+
+Paper reconciliation — 2026-09-22T23:49:27.617182+00:00
+  reconciles          : True
+  evidence complete   : True
+  trades              : 1 (0 settled)
+  open unhedged qty   : 100.0000
+
+  per account (opening + movements = ending):
+    [ok ] kalshi:USD             10000.0000 -56.7400 = 9943.2600   reserved=0.0000 available=9943.2600
+    [ok ] polymarket_global:USDC 10000.0000 +0.0000 = 10000.0000   reserved=0.0000 available=10000.0000
+
+  trade/ledger integrity : sound
+    trades verified      : 1 (2 entr(ies) checked)
+
+  open positions      : 1
+    614fa520-d820-4239-9dc8-f8d2cd768d77  kalshi:USD  100.00 @ 0.5500  (leg1_filled)
+  leg-2 evidence      : {'unchanged_reread': 1}
